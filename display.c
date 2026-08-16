@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <png.h>
 
 // SH1122 OLED command constants
 #define SET_COL_ADR_LSB         0x00
@@ -365,6 +366,100 @@ void sh1122_invert(SH1122* oled, int invert) {
     sh1122_write_cmd(oled, SET_NORM_INV | (invert & 1));
 }
 
+// Load PNG file and convert RGB24 to 4-bit grayscale
+// Returns NULL on error, caller must free() the returned buffer
+uint8_t* load_png_as_gray4(const char* filename, int* width, int* height) {
+    FILE* fp = fopen(filename, "rb");
+    if (!fp) {
+        return NULL;
+    }
+    
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png) {
+        fclose(fp);
+        return NULL;
+    }
+    
+    png_infop info = png_create_info_struct(png);
+    if (!info) {
+        png_destroy_read_struct(&png, NULL, NULL);
+        fclose(fp);
+        return NULL;
+    }
+    
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_read_struct(&png, &info, NULL);
+        fclose(fp);
+        return NULL;
+    }
+    
+    png_init_io(png, fp);
+    png_read_info(png, info);
+    
+    *width = png_get_image_width(png, info);
+    *height = png_get_image_height(png, info);
+    png_byte color_type = png_get_color_type(png, info);
+    png_byte bit_depth = png_get_bit_depth(png, info);
+    
+    // Convert to 8-bit RGB if needed
+    if (bit_depth == 16)
+        png_set_strip_16(png);
+    if (color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_palette_to_rgb(png);
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+        png_set_expand_gray_1_2_4_to_8(png);
+    if (png_get_valid(png, info, PNG_INFO_tRNS))
+        png_set_tRNS_to_alpha(png);
+    if (color_type == PNG_COLOR_TYPE_RGB ||
+        color_type == PNG_COLOR_TYPE_GRAY ||
+        color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
+    if (color_type == PNG_COLOR_TYPE_GRAY ||
+        color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png);
+    
+    png_read_update_info(png, info);
+    
+    // Allocate row pointers
+    png_bytep* row_pointers = (png_bytep*)malloc(sizeof(png_bytep) * (*height));
+    for (int y = 0; y < *height; y++) {
+        row_pointers[y] = (png_byte*)malloc(png_get_rowbytes(png, info));
+    }
+    
+    png_read_image(png, row_pointers);
+    
+    // Allocate output buffer for 4-bit grayscale
+    uint8_t* gray_data = (uint8_t*)malloc((*width) * (*height));
+    
+    // Convert RGB24 to 4-bit grayscale using luminosity formula
+    // Gray = 0.299*R + 0.587*G + 0.114*B
+    for (int y = 0; y < *height; y++) {
+        png_bytep row = row_pointers[y];
+        for (int x = 0; x < *width; x++) {
+            png_bytep px = &(row[x * 4]); // RGBA
+            uint8_t r = px[0];
+            uint8_t g = px[1];
+            uint8_t b = px[2];
+            
+            // Convert to 8-bit grayscale
+            uint8_t gray8 = (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
+            
+            // Convert to 4-bit (0-15)
+            gray_data[y * (*width) + x] = gray8 >> 4;
+        }
+    }
+    
+    // Clean up
+    for (int y = 0; y < *height; y++) {
+        free(row_pointers[y]);
+    }
+    free(row_pointers);
+    png_destroy_read_struct(&png, &info, NULL);
+    fclose(fp);
+    
+    return gray_data;
+}
+
 // Main program
 int main(int argc, char *argv[]) {
     printf("Initializing SH1122 OLED display...\n");
@@ -493,73 +588,42 @@ int main(int argc, char *argv[]) {
             close(server_fd);
             
         } else {
-        // Load and display animation from file
+        // Load and display PNG file (reloads continuously)
         const char* filename = argv[1];
-        printf("Loading animation from %s...\n", filename);
+        printf("Watching PNG file: %s (reloading at 50fps)\n", filename);
         
-        FILE* fp = fopen(filename, "rb");
-        if (!fp) {
-            fprintf(stderr, "Failed to open file: %s\n", filename);
-            sh1122_destroy(oled);
-            return 1;
-        }
+        printf("Press Ctrl+C to exit.\n");
         
-        // Each frame is 64x48 pixels at 8-bit grayscale = 3072 bytes
-        const int img_width = 64;
-        const int img_height = 48;
-        const int frame_size = img_width * img_height;
-        
-        
-        uint8_t* img_data = (uint8_t*)malloc(frame_size);
-        if (!img_data) {
-            fprintf(stderr, "Failed to allocate memory for frame\n");
-            fclose(fp);
-            sh1122_destroy(oled);
-            return 1;
-        }
-        
-        // Center the image on the display (256x48)
-        int offset_x = (256 - img_width) / 2;
-        int offset_y = (48 - img_height) / 2;
-        
-        printf("Playing animation. Press Ctrl+C to exit.\n");
-        
-        // Animation loop - play continuously
+        // Continuous reload loop at 50fps (20ms per frame)
         while (1) {
-            // Seek to start of file for looping
-            fseek(fp, 0, SEEK_SET);
+            int img_width, img_height;
+            uint8_t* img_data = load_png_as_gray4(filename, &img_width, &img_height);
             
-            for (int frame = 0;; frame++) {
-                // Read one frame
-                size_t bytes_read = fread(img_data, 1, frame_size, fp);
-                if (bytes_read == 0) {
-                    // End of file reached, loop back to start
-                    break;
-                }
-                if (bytes_read != frame_size) {
-                    fprintf(stderr, "Warning: Frame %d incomplete (%zu bytes)\n", frame, bytes_read);
-                    break;
-                }
-                
-                // Clear display and convert 8-bit to 4-bit grayscale
+            if (img_data) {
+                // Clear display
                 framebuffer_fill(oled->fb, 0);
                 
-                for (int y = 0; y < img_height; y++) {
-                    for (int x = 0; x < img_width; x++) {
-                        // Convert 8-bit grayscale to 4-bit (divide by 16)
-                        uint8_t pixel_8bit = img_data[y * img_width + x];
-                        uint8_t pixel_4bit = pixel_8bit >> 4;
-                        framebuffer_set_pixel(oled->fb, offset_x + x, offset_y + y, pixel_4bit);
+                // Center the image on the display (256x48)
+                int offset_x = (256 - img_width) / 2;
+                int offset_y = (48 - img_height) / 2;
+                
+                // Draw image (already in 4-bit grayscale)
+                for (int y = 0; y < img_height && y < 48; y++) {
+                    for (int x = 0; x < img_width && x < 256; x++) {
+                        uint8_t pixel = img_data[y * img_width + x];
+                        framebuffer_set_pixel(oled->fb, offset_x + x, offset_y + y, pixel);
                     }
                 }
                 
                 sh1122_show(oled);
-                usleep(13333);  // ~30 fps (33.3ms per frame)
+                free(img_data);
+            } else {
+                // If loading failed, just skip this frame
+                // (file might be being written)
             }
+            
+            usleep(20000);  // 50 fps (20ms per frame)
         }
-        
-        free(img_data);
-        fclose(fp);
         }
         
     } else {
