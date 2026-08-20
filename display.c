@@ -17,9 +17,6 @@
 #include <sys/ioctl.h>
 #include <linux/spi/spidev.h>
 #include <gpiod.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <png.h>
 #include "font4.h"
 
@@ -491,120 +488,6 @@ int main(int argc, char *argv[]) {
     
     // Check if a filename or tcp mode was provided
     if (argc > 1) {
-        // Check for TCP mode
-        if (strcmp(argv[1], "tcp") == 0) {
-            // TCP server mode
-            printf("Starting TCP server on port 1234...\n");
-            
-            int server_fd, client_fd;
-            struct sockaddr_in address;
-            int opt = 1;
-            int addrlen = sizeof(address);
-            
-            // Create socket
-            if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-                perror("socket failed");
-                sh1122_destroy(oled);
-                return 1;
-            }
-            
-            // Set socket options
-            if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-                perror("setsockopt");
-                close(server_fd);
-                sh1122_destroy(oled);
-                return 1;
-            }
-            
-            address.sin_family = AF_INET;
-            address.sin_addr.s_addr = INADDR_ANY;
-            address.sin_port = htons(1234);
-            
-            // Bind socket
-            if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-                perror("bind failed");
-                close(server_fd);
-                sh1122_destroy(oled);
-                return 1;
-            }
-            
-            // Listen for connections
-            if (listen(server_fd, 1) < 0) {
-                perror("listen");
-                close(server_fd);
-                sh1122_destroy(oled);
-                return 1;
-            }
-            
-            printf("Waiting for connection on port 1234...\n");
-            
-            // Accept single connection
-            if ((client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-                perror("accept");
-                close(server_fd);
-                sh1122_destroy(oled);
-                return 1;
-            }
-            
-            printf("Client connected\n");
-            
-            // Frame parameters
-            const int img_width = 64;
-            const int img_height = 48;
-            const int frame_size = img_width * img_height;
-            
-            uint8_t* img_data = (uint8_t*)malloc(frame_size);
-            if (!img_data) {
-                fprintf(stderr, "Failed to allocate memory for frame\n");
-                close(client_fd);
-                close(server_fd);
-                sh1122_destroy(oled);
-                return 1;
-            }
-            
-            // Center the image on the display (256x48)
-            int offset_x = (256 - img_width) / 2;
-            int offset_y = (48 - img_height) / 2;
-            
-            printf("Receiving frames. Press Ctrl+C to exit.\n");
-            
-            // Receive and display frames continuously
-            while (1) {
-                // Read one frame from TCP connection
-                int total_read = 0;
-                while (total_read < frame_size) {
-                    int bytes_read = read(client_fd, img_data + total_read, frame_size - total_read);
-                    if (bytes_read <= 0) {
-                        printf("Connection closed or error\n");
-                        free(img_data);
-                        close(client_fd);
-                        close(server_fd);
-                        sh1122_destroy(oled);
-                        return 0;
-                    }
-                    total_read += bytes_read;
-                }
-                
-                // Clear display and convert 8-bit to 4-bit grayscale
-                framebuffer_fill(oled->fb, 0);
-                
-                for (int y = 0; y < img_height; y++) {
-                    for (int x = 0; x < img_width; x++) {
-                        // Convert 8-bit grayscale to 4-bit (divide by 16)
-                        uint8_t pixel_8bit = img_data[y * img_width + x];
-                        uint8_t pixel_4bit = pixel_8bit >> 4;
-                        framebuffer_set_pixel(oled->fb, offset_x + x, offset_y + y, pixel_4bit);
-                    }
-                }
-                
-                sh1122_show(oled);
-            }
-            
-            free(img_data);
-            close(client_fd);
-            close(server_fd);
-            
-        } else {
         // Load and display PNG file (reloads continuously)
         const char* filename = argv[1];
         printf("Watching PNG file: %s (reloading at 50fps)\n", filename);
@@ -640,7 +523,6 @@ int main(int argc, char *argv[]) {
             }
             
             usleep(20000);  // 50 fps (20ms per frame)
-        }
         }
         
     } else {
@@ -695,7 +577,6 @@ int main(int argc, char *argv[]) {
     // Create source framebuffer from image data
     FrameBuffer* fb = framebuffer_create(32, 40);
     memcpy(fb->buffer, image_data, sizeof(image_data));
-    // render_textf(&font, fb->buffer, W, H, 16, 0, 40, W, pitch, "Value=%d", 42);
     
     // Animation loop
     for (int step = 0; step <= 128 + 16; step++) {
