@@ -99,6 +99,111 @@ int gpio_write(unsigned int pin, int value) {
 }
 
 static font4_t font;  // Global font instance
+static font4_t fa;    // Global FontAwesome instance
+#define FA_WIFI "\uf1eb"
+#define FA_VOLUME_UP "\uf028"
+#define FA_VOLUME_DOWN "\uf027"
+#define FA_VOLUME_OFF "\uf026"
+#define FA_VOLUME_MUTE "\uf6a9"
+#define FA_FAN "\uf863"
+#define FA_TEMPERATURE_HIGH "\uf769"
+#define FA_MUSIC "\uf001"
+#define FA_PLUG "\uf1e6"
+
+// Load PNG file and convert RGB24 to 4-bit grayscale
+// Returns NULL on error, caller must free() the returned buffer
+uint8_t* load_png_as_gray4(const char* filename, int* width, int* height) {
+    FILE* fp = fopen(filename, "rb");
+    if (!fp) {
+        return NULL;
+    }
+    
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png) {
+        fclose(fp);
+        return NULL;
+    }
+    
+    png_infop info = png_create_info_struct(png);
+    if (!info) {
+        png_destroy_read_struct(&png, NULL, NULL);
+        fclose(fp);
+        return NULL;
+    }
+    
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_read_struct(&png, &info, NULL);
+        fclose(fp);
+        return NULL;
+    }
+    
+    png_init_io(png, fp);
+    png_read_info(png, info);
+    
+    *width = png_get_image_width(png, info);
+    *height = png_get_image_height(png, info);
+    png_byte color_type = png_get_color_type(png, info);
+    png_byte bit_depth = png_get_bit_depth(png, info);
+    
+    // Convert to 8-bit RGB if needed
+    if (bit_depth == 16)
+        png_set_strip_16(png);
+    if (color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_palette_to_rgb(png);
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+        png_set_expand_gray_1_2_4_to_8(png);
+    if (png_get_valid(png, info, PNG_INFO_tRNS))
+        png_set_tRNS_to_alpha(png);
+    if (color_type == PNG_COLOR_TYPE_RGB ||
+        color_type == PNG_COLOR_TYPE_GRAY ||
+        color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
+    if (color_type == PNG_COLOR_TYPE_GRAY ||
+        color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png);
+    
+    png_read_update_info(png, info);
+    
+    // Allocate row pointers
+    png_bytep* row_pointers = (png_bytep*)malloc(sizeof(png_bytep) * (*height));
+    for (int y = 0; y < *height; y++) {
+        row_pointers[y] = (png_byte*)malloc(png_get_rowbytes(png, info));
+    }
+    
+    png_read_image(png, row_pointers);
+    
+    // Allocate output buffer for 4-bit grayscale
+    uint8_t* gray_data = (uint8_t*)malloc((*width) * (*height));
+    
+    // Convert RGB24 to 4-bit grayscale using luminosity formula
+    // Gray = 0.299*R + 0.587*G + 0.114*B
+    for (int y = 0; y < *height; y++) {
+        png_bytep row = row_pointers[y];
+        for (int x = 0; x < *width; x++) {
+            png_bytep px = &(row[x * 4]); // RGBA
+            uint8_t r = px[0];
+            uint8_t g = px[1];
+            uint8_t b = px[2];
+            
+            // Convert to 8-bit grayscale
+            uint8_t gray8 = (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
+            
+            // Convert to 4-bit (0-15)
+            gray_data[y * (*width) + x] = gray8 >> 4;
+        }
+    }
+    
+    // Clean up
+    for (int y = 0; y < *height; y++) {
+        free(row_pointers[y]);
+    }
+    free(row_pointers);
+    png_destroy_read_struct(&png, &info, NULL);
+    fclose(fp);
+    
+    return gray_data;
+}
+
 
 // FrameBuffer structure and functions
 typedef struct {
@@ -108,17 +213,41 @@ typedef struct {
     int buffer_size;
 } FrameBuffer;
 
-FrameBuffer* framebuffer_create(int width, int height) {
+void framebuffer_init() {
+    font4_init(&font, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+    font4_init(&fa, "Font Awesome 7 Free-Solid-900.otf");
+}
+
+FrameBuffer* framebuffer_create_with_buffer(int width, int height, uint8_t* buffer) {
     FrameBuffer* fb = (FrameBuffer*)malloc(sizeof(FrameBuffer));
     if (!fb) return NULL;
     
     fb->width = width;
     fb->height = height;
     fb->buffer_size = (width * height) / 2;  // 4-bit per pixel
-    fb->buffer = (uint8_t*)calloc(fb->buffer_size, 1);
+    fb->buffer = buffer;
     
     if (!fb->buffer) {
         free(fb);
+        return NULL;
+    }
+    
+    return fb;
+}
+
+FrameBuffer* framebuffer_create(int width, int height) {
+    uint8_t* buffer = (uint8_t*)calloc((width * height) / 2, 1);
+    return framebuffer_create_with_buffer(width, height, buffer);
+}
+
+FrameBuffer* framebuffer_create_from_png(const char* filename) {
+    int width, height;
+    uint8_t* gray_data = load_png_as_gray4(filename, &width, &height);
+    if (!gray_data) return NULL;
+    
+    FrameBuffer* fb = framebuffer_create_with_buffer(width, height, gray_data);
+    if (!fb) {
+        free(gray_data);
         return NULL;
     }
     
@@ -195,17 +324,20 @@ void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_
     }
 }
 
-void framebuffer_draw_text(FrameBuffer* fb, font4_t* font, int x, int y, int size, const char* text) {
-    render_text(font, fb->buffer, fb->width, fb->height, x, y, size, fb->width - x, (fb->width + 1) / 2, text);
+void framebuffer_draw_text(FrameBuffer* fb, font4_t* font, int size, int x, int y, const char* text) {
+    render_text(font, fb->buffer, fb->width, fb->height, size, x, y, fb->width - x, (fb->width + 1) / 2, text);
 }
-void framebuffer_draw_text_fmt(FrameBuffer* fb, font4_t* font, int x, int y, int size, const char* fmt, ...) {
+void framebuffer_draw_text_fmt(FrameBuffer* fb, font4_t* font, int size, int x, int y, const char* fmt, ...) {
     char buffer[256];
     va_list args;
     va_start(args, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     
-    framebuffer_draw_text(fb, font, x, y, size, buffer);
+    framebuffer_draw_text(fb, font, size, x, y, buffer);
+}
+void framebuffer_draw_icon(FrameBuffer* fb, int size, int x, int y, const char* icon) {
+    framebuffer_draw_text(fb, &fa, size, x, y + size, icon);
 }
 
 // SH1122 OLED display structure and functions
@@ -380,102 +512,9 @@ void sh1122_invert(SH1122* oled, int invert) {
     sh1122_write_cmd(oled, SET_NORM_INV | (invert & 1));
 }
 
-// Load PNG file and convert RGB24 to 4-bit grayscale
-// Returns NULL on error, caller must free() the returned buffer
-uint8_t* load_png_as_gray4(const char* filename, int* width, int* height) {
-    FILE* fp = fopen(filename, "rb");
-    if (!fp) {
-        return NULL;
-    }
-    
-    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-    if (!png) {
-        fclose(fp);
-        return NULL;
-    }
-    
-    png_infop info = png_create_info_struct(png);
-    if (!info) {
-        png_destroy_read_struct(&png, NULL, NULL);
-        fclose(fp);
-        return NULL;
-    }
-    
-    if (setjmp(png_jmpbuf(png))) {
-        png_destroy_read_struct(&png, &info, NULL);
-        fclose(fp);
-        return NULL;
-    }
-    
-    png_init_io(png, fp);
-    png_read_info(png, info);
-    
-    *width = png_get_image_width(png, info);
-    *height = png_get_image_height(png, info);
-    png_byte color_type = png_get_color_type(png, info);
-    png_byte bit_depth = png_get_bit_depth(png, info);
-    
-    // Convert to 8-bit RGB if needed
-    if (bit_depth == 16)
-        png_set_strip_16(png);
-    if (color_type == PNG_COLOR_TYPE_PALETTE)
-        png_set_palette_to_rgb(png);
-    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
-        png_set_expand_gray_1_2_4_to_8(png);
-    if (png_get_valid(png, info, PNG_INFO_tRNS))
-        png_set_tRNS_to_alpha(png);
-    if (color_type == PNG_COLOR_TYPE_RGB ||
-        color_type == PNG_COLOR_TYPE_GRAY ||
-        color_type == PNG_COLOR_TYPE_PALETTE)
-        png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
-    if (color_type == PNG_COLOR_TYPE_GRAY ||
-        color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
-        png_set_gray_to_rgb(png);
-    
-    png_read_update_info(png, info);
-    
-    // Allocate row pointers
-    png_bytep* row_pointers = (png_bytep*)malloc(sizeof(png_bytep) * (*height));
-    for (int y = 0; y < *height; y++) {
-        row_pointers[y] = (png_byte*)malloc(png_get_rowbytes(png, info));
-    }
-    
-    png_read_image(png, row_pointers);
-    
-    // Allocate output buffer for 4-bit grayscale
-    uint8_t* gray_data = (uint8_t*)malloc((*width) * (*height));
-    
-    // Convert RGB24 to 4-bit grayscale using luminosity formula
-    // Gray = 0.299*R + 0.587*G + 0.114*B
-    for (int y = 0; y < *height; y++) {
-        png_bytep row = row_pointers[y];
-        for (int x = 0; x < *width; x++) {
-            png_bytep px = &(row[x * 4]); // RGBA
-            uint8_t r = px[0];
-            uint8_t g = px[1];
-            uint8_t b = px[2];
-            
-            // Convert to 8-bit grayscale
-            uint8_t gray8 = (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
-            
-            // Convert to 4-bit (0-15)
-            gray_data[y * (*width) + x] = gray8 >> 4;
-        }
-    }
-    
-    // Clean up
-    for (int y = 0; y < *height; y++) {
-        free(row_pointers[y]);
-    }
-    free(row_pointers);
-    png_destroy_read_struct(&png, &info, NULL);
-    fclose(fp);
-    
-    return gray_data;
-}
-
 // Main program
 int main(int argc, char *argv[]) {
+    framebuffer_init();  // Initialize fonts
     printf("Initializing SH1122 OLED display...\n");
     
     SH1122* oled = sh1122_create("/dev/spidev0.0", 256, 48, 2);
@@ -496,10 +535,12 @@ int main(int argc, char *argv[]) {
         
         // Continuous reload loop at 50fps (20ms per frame)
         while (1) {
-            int img_width, img_height;
-            uint8_t* img_data = load_png_as_gray4(filename, &img_width, &img_height);
+            FrameBuffer *img_fb = framebuffer_create_from_png(filename);
             
-            if (img_data) {
+            if (img_fb) {
+                int img_width = img_fb->width;
+                int img_height = img_fb->height;
+                uint8_t* img_data = img_fb->buffer;
                 // Clear display
                 framebuffer_fill(oled->fb, 0);
                 
@@ -516,7 +557,7 @@ int main(int argc, char *argv[]) {
                 }
                 
                 sh1122_show(oled);
-                free(img_data);
+                framebuffer_destroy(img_fb);
             } else {
                 // If loading failed, just skip this frame
                 // (file might be being written)
@@ -527,8 +568,11 @@ int main(int argc, char *argv[]) {
         
     } else {
         // Run original animation
-    font4_t font;
+    font4_t font = {};
     font4_init(&font, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+    font4_t fa = {};
+    // font4_init(&fa, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+    font4_init(&fa, "Font Awesome 7 Free-Solid-900.otf");
 
     // Create test image buffer (32x40 pixels)
     uint8_t image_data[32 * 20] = {
@@ -590,13 +634,16 @@ int main(int argc, char *argv[]) {
         }
         framebuffer_rect(oled->fb, 0, 0, 256, 48, 15);
         framebuffer_draw_text_fmt(oled->fb, &font, 12, 2, 22, "Depeche Mode %02d:%02d", (step / 1) / 60, (step / 1) % 60);
-        framebuffer_draw_text_fmt(oled->fb, &font, 10, 2, 32, "Enjoy the Silence");
-        
+        framebuffer_draw_text_fmt(oled->fb, &font, 10, 2, 32, "Enjoy the Silencę");
+        framebuffer_draw_icon(oled->fb, 16, 160, 0, FA_WIFI);
+        framebuffer_draw_icon(oled->fb, 16, 190, 0, FA_VOLUME_UP);
+        framebuffer_draw_icon(oled->fb, 16, 220, 0, FA_TEMPERATURE_HIGH);
         sh1122_show(oled);
         usleep(1000);  // 1ms delay
     }
     
     font4_destroy(&font);
+    font4_destroy(&fa);
     // Clear display at the end
     // framebuffer_fill(oled->fb, 0);
     // sh1122_show(oled);
