@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <png.h>
+#include "font4.h"
 
 // SH1122 OLED command constants
 #define SET_COL_ADR_LSB         0x00
@@ -99,6 +100,8 @@ int gpio_write(unsigned int pin, int value) {
     return gpiod_line_request_set_value(gpio_request, pin, 
                                         value ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE);
 }
+
+static font4_t font;  // Global font instance
 
 // FrameBuffer structure and functions
 typedef struct {
@@ -195,12 +198,26 @@ void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_
     }
 }
 
+void framebuffer_draw_text(FrameBuffer* fb, font4_t* font, int x, int y, int size, const char* text) {
+    render_text(font, fb->buffer, fb->width, fb->height, x, y, size, fb->width - x, (fb->width + 1) / 2, text);
+}
+void framebuffer_draw_text_fmt(FrameBuffer* fb, font4_t* font, int x, int y, int size, const char* fmt, ...) {
+    char buffer[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    
+    framebuffer_draw_text(fb, font, x, y, size, buffer);
+}
+
 // SH1122 OLED display structure and functions
 typedef struct {
     int spi_fd;
     int width;
     int height;
     FrameBuffer* fb;
+    font4_t font;
 } SH1122;
 
 int sh1122_write_cmd(SH1122* oled, uint8_t cmd) {
@@ -628,7 +645,9 @@ int main(int argc, char *argv[]) {
         
     } else {
         // Run original animation
-    
+    font4_t font;
+    font4_init(&font, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+
     // Create test image buffer (32x40 pixels)
     uint8_t image_data[32 * 20] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -676,6 +695,7 @@ int main(int argc, char *argv[]) {
     // Create source framebuffer from image data
     FrameBuffer* fb = framebuffer_create(32, 40);
     memcpy(fb->buffer, image_data, sizeof(image_data));
+    // render_textf(&font, fb->buffer, W, H, 16, 0, 40, W, pitch, "Value=%d", 42);
     
     // Animation loop
     for (int step = 0; step <= 128 + 16; step++) {
@@ -688,11 +708,14 @@ int main(int argc, char *argv[]) {
             framebuffer_fill_rect(oled->fb, 247 - (i * 8), 55 - 16, 8, 8, (15 - i + step) % 16);
         }
         framebuffer_rect(oled->fb, 0, 0, 256, 48, 15);
+        framebuffer_draw_text_fmt(oled->fb, &font, 12, 2, 22, "Depeche Mode %02d:%02d", (step / 1) / 60, (step / 1) % 60);
+        framebuffer_draw_text_fmt(oled->fb, &font, 10, 2, 32, "Enjoy the Silence");
         
         sh1122_show(oled);
         usleep(1000);  // 1ms delay
     }
     
+    font4_destroy(&font);
     // Clear display at the end
     // framebuffer_fill(oled->fb, 0);
     // sh1122_show(oled);
