@@ -71,12 +71,46 @@ void update_temp_and_fan(struct window_t* w) {
     framebuffer_draw_icon(w->fb, 20, 138, (48-20)/2, FA_FAN);    
     framebuffer_draw_text_fmt(w->fb, 20, 168, (48+20)/2, "%d", fan_speed);
 }
+int read_process_output(const char* command, char* buffer, size_t buffer_size) {
+    FILE* pipe = popen(command, "r");
+    if (!pipe) return -1;
+    if (!fgets(buffer, buffer_size, pipe)) {
+        pclose(pipe);
+        return -1;
+    }
+    pclose(pipe);
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') {
+        buffer[len - 1] = '\0';
+    }
+    return 0;
+}
+void update_power_usage_monitor(struct window_t* w) {
+    framebuffer_fill(w->fb, 0);
+    char power_buf[32];
+    char *(commands[5]) = {
+#include "power_commands.h"
+    };
+    framebuffer_fill(w->fb, 0);
+    framebuffer_draw_icon(w->fb, 16, 0, (48-16)/2, FA_PLUG);
+    for (int i = 0; i < 5; i++) {
+        if (!read_process_output(commands[i], power_buf, sizeof(power_buf))) {
+            float usage = strtof(power_buf, 0);
+            framebuffer_draw_text_fmt(w->fb, 12, i * 50 + 20, (48+12)/2, usage < 10 ? "%.1fW" : "%.0fW", usage);
+        } else {
+            framebuffer_draw_text(w->fb, 12, i * 50 + 20, (48+12)/2, "N/A");
+        }
+    }
+}
 struct window_t  windows[] = {{
     .update_func = update_time,
     .update_frequency_s = 1
 }, {
     .update_func = update_temp_and_fan,
     .update_frequency_s = 1
+}, {
+    .update_func = update_power_usage_monitor,
+    .update_frequency_s = 2
 }};
 void windows_init() {
     for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
@@ -155,7 +189,7 @@ int main(int argc, char *argv[]) {
     
     // Create source framebuffer from image data
     FrameBuffer* fb_logo = framebuffer_create_with_buffer(32, 40, image_data);
-    struct window_t* current_window = &windows[1];
+    struct window_t* current_window = &windows[2];
     
     // Animation loop
     for (int step = 0; step <= 128 + 16 || 1; step++) {
