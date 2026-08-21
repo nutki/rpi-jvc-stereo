@@ -19,6 +19,7 @@
 #include <gpiod.h>
 #include <png.h>
 #include "font4.h"
+#include "display.h"
 
 // SH1122 OLED command constants
 #define SET_COL_ADR_LSB         0x00
@@ -205,14 +206,6 @@ uint8_t* load_png_as_gray4(const char* filename, int* width, int* height) {
 }
 
 
-// FrameBuffer structure and functions
-typedef struct {
-    uint8_t* buffer;
-    int width;
-    int height;
-    int buffer_size;
-} FrameBuffer;
-
 void framebuffer_init() {
     font4_init(&font, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
     font4_init(&fa, "Font Awesome 7 Free-Solid-900.otf");
@@ -324,30 +317,24 @@ void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_
     }
 }
 
-void framebuffer_draw_text(FrameBuffer* fb, font4_t* font, int size, int x, int y, const char* text) {
+static void framebuffer_draw_text_with_font(FrameBuffer* fb, font4_t* font, int size, int x, int y, const char* text) {
     render_text(font, fb->buffer, fb->width, fb->height, size, x, y, fb->width - x, (fb->width + 1) / 2, text);
 }
-void framebuffer_draw_text_fmt(FrameBuffer* fb, font4_t* font, int size, int x, int y, const char* fmt, ...) {
+void framebuffer_draw_text(FrameBuffer* fb, int size, int x, int y, const char* text) {
+    framebuffer_draw_text_with_font(fb, &font, size, x, y, text);
+}
+void framebuffer_draw_text_fmt(FrameBuffer* fb, int size, int x, int y, const char* fmt, ...) {
     char buffer[256];
     va_list args;
     va_start(args, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     
-    framebuffer_draw_text(fb, font, size, x, y, buffer);
+    framebuffer_draw_text(fb, size, x, y, buffer);
 }
 void framebuffer_draw_icon(FrameBuffer* fb, int size, int x, int y, const char* icon) {
-    framebuffer_draw_text(fb, &fa, size, x, y + size, icon);
+    framebuffer_draw_text_with_font(fb, &fa, size, x, y + size, icon);
 }
-
-// SH1122 OLED display structure and functions
-typedef struct {
-    int spi_fd;
-    int width;
-    int height;
-    FrameBuffer* fb;
-    font4_t font;
-} SH1122;
 
 int sh1122_write_cmd(SH1122* oled, uint8_t cmd) {
     gpio_write(GPIO_DC, 0);  // Command mode
@@ -568,11 +555,6 @@ int main(int argc, char *argv[]) {
         
     } else {
         // Run original animation
-    font4_t font = {};
-    font4_init(&font, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
-    font4_t fa = {};
-    // font4_init(&fa, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
-    font4_init(&fa, "Font Awesome 7 Free-Solid-900.otf");
 
     // Create test image buffer (32x40 pixels)
     uint8_t image_data[32 * 20] = {
@@ -633,8 +615,8 @@ int main(int argc, char *argv[]) {
             framebuffer_fill_rect(oled->fb, 247 - (i * 8), 55 - 16, 8, 8, (15 - i + step) % 16);
         }
         framebuffer_rect(oled->fb, 0, 0, 256, 48, 15);
-        framebuffer_draw_text_fmt(oled->fb, &font, 12, 2, 22, "Depeche Mode %02d:%02d", (step / 1) / 60, (step / 1) % 60);
-        framebuffer_draw_text_fmt(oled->fb, &font, 10, 2, 32, "Enjoy the Silencę");
+        framebuffer_draw_text_fmt(oled->fb, 12, 2, 22, "Depeche Mode %02d:%02d", (step / 1) / 60, (step / 1) % 60);
+        framebuffer_draw_text_fmt(oled->fb, 10, 2, 32, "Enjoy the Silencę");
         framebuffer_draw_icon(oled->fb, 16, 160, 0, FA_WIFI);
         framebuffer_draw_icon(oled->fb, 16, 190, 0, FA_VOLUME_UP);
         framebuffer_draw_icon(oled->fb, 16, 220, 0, FA_TEMPERATURE_HIGH);
@@ -642,8 +624,6 @@ int main(int argc, char *argv[]) {
         usleep(1000);  // 1ms delay
     }
     
-    font4_destroy(&font);
-    font4_destroy(&fa);
     // Clear display at the end
     // framebuffer_fill(oled->fb, 0);
     // sh1122_show(oled);
