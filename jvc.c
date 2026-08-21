@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include "display.h"
 SH1122* oled;
 FrameBuffer* fb;
 void display_init() {
     framebuffer_init();
-    printf("Initializing SH1122 OLED display...\n");
     oled = sh1122_create("/dev/spidev0.0", 256, 48, 2);
     if (!oled) {
         fprintf(stderr, "Failed to initialize display\n");
@@ -97,11 +97,14 @@ int main(int argc, char *argv[]) {
         // Draw animated rectangles at the bottom
         for (int i = 0; i < 16; i++) {
             framebuffer_fill_rect(fb, i * 8, 55 - 16, 8, 8, (15 - i + step) % 16);
-            framebuffer_fill_rect(oled->fb, 247 - (i * 8), 55 - 16, 8, 8, (15 - i + step) % 16);
+            framebuffer_fill_rect(fb, 247 - (i * 8), 55 - 16, 8, 8, (15 - i + step) % 16);
         }
         framebuffer_rect(fb, 0, 0, 256, 48, 15);
-        framebuffer_draw_text_fmt(fb, 12, 2, 22, "Depeche Mode %02d:%02d", (step / 1) / 60, (step / 1) % 60);
+        time_t now = time(NULL);
+        struct tm *local_now = localtime(&now);
+        framebuffer_draw_text_fmt(fb, 12, 2, 22, "Depeche Mode %02d:%02d", local_now->tm_hour, local_now->tm_min);
         framebuffer_draw_text_fmt(fb, 10, 2, 32, "Enjoy the Silencę");
+        
         framebuffer_draw_icon(fb, 16, 160, 0, FA_WIFI);
         framebuffer_draw_icon(fb, 16, 190, 0, FA_VOLUME_UP);
         framebuffer_draw_icon(fb, 16, 220, 0, FA_TEMPERATURE_HIGH);
@@ -110,8 +113,8 @@ int main(int argc, char *argv[]) {
     }
     
     // Clear display at the end
-    // framebuffer_fill(oled->fb, 0);
-    // sh1122_show(oled);
+    framebuffer_fill(fb, 0);
+    display_show();
     
     }
     
