@@ -302,6 +302,23 @@ void framebuffer_fill_rect(FrameBuffer* fb, int x, int y, int w, int h, uint8_t 
 }
 
 void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_y) {
+    if (dest->width == src->width && dest_x == 0) {
+        int pitch = (dest->width + 1) / 2;
+        int len = src->height * pitch;
+        uint8_t *src_ptr = src->buffer;
+        uint8_t *dest_ptr = dest->buffer;
+        if (dest_y + src->height > dest->height) {
+            len = (dest->height - dest_y) * pitch;
+        }
+        if (dest_y < 0) {
+            src_ptr -= dest_y * pitch;
+            len += dest_y * pitch;
+            dest_y = 0;
+        }
+        dest_ptr += dest_y * pitch;
+        memcpy(dest_ptr, src_ptr, len);
+        return;
+    }
     for (int y = 0; y < src->height; y++) {
         for (int x = 0; x < src->width; x++) {
             int dx = dest_x + x;
