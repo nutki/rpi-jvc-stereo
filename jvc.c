@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include "display.h"
+#include "wlan_check.h"
 SH1122* oled;
 FrameBuffer* fb;
 void display_init() {
@@ -102,6 +103,18 @@ void update_power_usage_monitor(struct window_t* w) {
         }
     }
 }
+void update_wifi_status(struct window_t* w) {
+    framebuffer_fill(w->fb, 0);
+    int signal = 0, rxrate = 0, txrate = 0;
+    if (wlan_status("wlan1", &signal, &rxrate, &txrate) == EXIT_SUCCESS) {
+        framebuffer_draw_icon(w->fb, 16, 0, (48-16)/2, FA_WIFI);
+        if (signal) framebuffer_draw_text_fmt(w->fb, 16, 24, (48+16)/2, "%d dBm", signal);
+        framebuffer_draw_text_fmt(w->fb, 12, 128, (48+12-12)/2, "RX: %.1f Mbit/s", (double)rxrate / 10.0);
+        framebuffer_draw_text_fmt(w->fb, 12, 128, (48+12+12)/2, "TX: %.1f Mbit/s", (double)txrate / 10.0);
+    } else {
+        framebuffer_draw_text(w->fb, 12, 20, (48+12)/2, "WiFi N/A");
+    }
+}
 struct window_t  windows[] = {{
     .update_func = update_time,
     .update_frequency_s = 1
@@ -111,6 +124,9 @@ struct window_t  windows[] = {{
 }, {
     .update_func = update_power_usage_monitor,
     .update_frequency_s = 2
+}, {
+    .update_func = update_wifi_status,
+    .update_frequency_s = 1
 }};
 void windows_init() {
     for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
@@ -189,7 +205,7 @@ int main(int argc, char *argv[]) {
     
     // Create source framebuffer from image data
     FrameBuffer* fb_logo = framebuffer_create_with_buffer(32, 40, image_data);
-    struct window_t* current_window = &windows[2];
+    struct window_t* current_window = &windows[3];
     
     // Animation loop
     for (int step = 0; step <= 128 + 16 || 1; step++) {
