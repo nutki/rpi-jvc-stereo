@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
@@ -26,9 +27,75 @@ void display_show() {
     if (oled) sh1122_show(oled);
 }
 // Main program
+struct window_t {
+    FrameBuffer* fb;
+    int64_t last_update_time;
+    void (*update_func)(struct window_t *w);
+    int32_t update_frequency_s;
+};
+
+void update_time(struct window_t* w) {
+    framebuffer_fill(w->fb, 0);    
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char time_str[9];
+    strftime(time_str, sizeof(time_str), "%H:%M", tm_info);
+    framebuffer_draw_text(w->fb, 16, tm_info->tm_min * 3 + 16, 24+8, time_str);
+}
+int read_file_content(const char* path, char* buffer, size_t buffer_size) {
+    FILE* file = fopen(path, "r");
+    if (!file) return -1;
+    if (!fgets(buffer, buffer_size, file)) {
+        fclose(file);
+        return -1;
+    }    
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') {
+        buffer[len - 1] = '\0';
+    }
+    fclose(file);
+    return 0;
+}
+void update_temp_and_fan(struct window_t* w) {
+    char temp_buf[32];
+    framebuffer_fill(w->fb, 0);
+    int temperature = 0;
+    if(!read_file_content("/sys/class/thermal/thermal_zone0/temp", temp_buf, sizeof(temp_buf)))
+        temperature = atoi(temp_buf);
+    int fan_speed = 0;
+    if(!read_file_content("/sys/class/thermal/cooling_device0/cur_state", temp_buf, sizeof(temp_buf)))
+        fan_speed = atoi(temp_buf);
+    
+    framebuffer_draw_icon(w->fb, 20, 10, (48-20)/2, FA_TEMPERATURE_HIGH);
+    framebuffer_draw_text_fmt(w->fb, 20, 40, (48+20)/2, "%3.1f", temperature/1000.0);
+    framebuffer_draw_icon(w->fb, 20, 138, (48-20)/2, FA_FAN);    
+    framebuffer_draw_text_fmt(w->fb, 20, 168, (48+20)/2, "%d", fan_speed);
+}
+struct window_t  windows[] = {{
+    .update_func = update_time,
+    .update_frequency_s = 1
+}, {
+    .update_func = update_temp_and_fan,
+    .update_frequency_s = 1
+}};
+void windows_init() {
+    for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
+        windows[i].fb = framebuffer_create(256, 48);
+        windows[i].last_update_time = 0;
+    }
+}
+void update_window(struct window_t* w) {
+    int64_t current_time = time(NULL);
+    int64_t elapsed_time = (current_time - w->last_update_time);
+    if (w->last_update_time == 0 || elapsed_time >= w->update_frequency_s) {
+        w->update_func(w);
+        w->last_update_time = current_time;
+    }
+}
 int main(int argc, char *argv[]) {
     display_init();
-    
+    windows_init();
+
     if (argc > 1) {
         const char* filename = argv[1];
         printf("Watching PNG file: %s (reloading at 50fps)\n", filename);
@@ -88,26 +155,29 @@ int main(int argc, char *argv[]) {
     
     // Create source framebuffer from image data
     FrameBuffer* fb_logo = framebuffer_create_with_buffer(32, 40, image_data);
+    struct window_t* current_window = &windows[1];
     
     // Animation loop
-    for (int step = 0; step <= 128 + 16; step++) {
-        framebuffer_fill(fb, 0);
-        framebuffer_blit(fb, fb_logo, step - 32, 0);
+    for (int step = 0; step <= 128 + 16 || 1; step++) {
+        update_window(current_window);
+        framebuffer_blit(fb, current_window->fb, 0, 0);
+        // framebuffer_fill(fb, 0);
+        // framebuffer_blit(fb, fb_logo, step - 32, 0);
         
-        // Draw animated rectangles at the bottom
-        for (int i = 0; i < 16; i++) {
-            framebuffer_fill_rect(fb, i * 8, 55 - 16, 8, 8, (15 - i + step) % 16);
-            framebuffer_fill_rect(fb, 247 - (i * 8), 55 - 16, 8, 8, (15 - i + step) % 16);
-        }
-        framebuffer_rect(fb, 0, 0, 256, 48, 15);
-        time_t now = time(NULL);
-        struct tm *local_now = localtime(&now);
-        framebuffer_draw_text_fmt(fb, 12, 2, 22, "Depeche Mode %02d:%02d", local_now->tm_hour, local_now->tm_min);
-        framebuffer_draw_text_fmt(fb, 10, 2, 32, "Enjoy the Silencę");
+        // // Draw animated rectangles at the bottom
+        // for (int i = 0; i < 16; i++) {
+        //     framebuffer_fill_rect(fb, i * 8, 55 - 16, 8, 8, (15 - i + step) % 16);
+        //     framebuffer_fill_rect(fb, 247 - (i * 8), 55 - 16, 8, 8, (15 - i + step) % 16);
+        // }
+        // framebuffer_rect(fb, 0, 0, 256, 48, 15);
+        // time_t now = time(NULL);
+        // struct tm *local_now = localtime(&now);
+        // framebuffer_draw_text_fmt(fb, 12, 2, 22, "Depeche Mode %02d:%02d", local_now->tm_hour, local_now->tm_min);
+        // framebuffer_draw_text_fmt(fb, 10, 2, 32, "Enjoy the Silencę");
         
-        framebuffer_draw_icon(fb, 16, 160, 0, FA_WIFI);
-        framebuffer_draw_icon(fb, 16, 190, 0, FA_VOLUME_UP);
-        framebuffer_draw_icon(fb, 16, 220, 0, FA_TEMPERATURE_HIGH);
+        // framebuffer_draw_icon(fb, 16, 160, 0, FA_WIFI);
+        // framebuffer_draw_icon(fb, 16, 190, 0, FA_VOLUME_UP);
+        // framebuffer_draw_icon(fb, 16, 220, 0, FA_TEMPERATURE_HIGH);
         display_show();
         usleep(1000);  // 1ms delay
     }
