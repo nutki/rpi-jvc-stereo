@@ -7,6 +7,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "font4.h"
 
 // FrameBuffer structure and functions
 typedef struct {
@@ -30,6 +31,15 @@ void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_
 void framebuffer_draw_text(FrameBuffer* fb, int size, int x, int y, const char* text);
 void framebuffer_draw_text_fmt(FrameBuffer* fb, int size, int x, int y, const char* fmt, ...);
 void framebuffer_draw_icon(FrameBuffer* fb, int size, int x, int y, const char* icon);
+#define FA_WIFI "\uf1eb"
+#define FA_VOLUME_UP "\uf028"
+#define FA_VOLUME_DOWN "\uf027"
+#define FA_VOLUME_OFF "\uf026"
+#define FA_VOLUME_MUTE "\uf6a9"
+#define FA_FAN "\uf863"
+#define FA_TEMPERATURE_HIGH "\uf769"
+#define FA_MUSIC "\uf001"
+#define FA_PLUG "\uf1e6"
 
 // SH1122 OLED display structure and functions
 typedef struct {

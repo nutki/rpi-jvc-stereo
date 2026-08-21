@@ -2,21 +2,19 @@
 
 CC = gcc
 CFLAGS = -Wall -O2 $(shell pkg-config --cflags freetype2)
-LDFLAGS = 
+LDLIBS = -lgpiod -lpng -lfreetype
 
 # Targets
-all: display control
+all: jvc control
 
-display: display.o font4.o
-	$(CC) $(CFLAGS) -o display $^ -lgpiod -lpng -lfreetype
+jvc: jvc.o display.o font4.o
 
 control: control.o
-	$(CC) $(CFLAGS) -o control control.o -lgpiod
 
 clean:
-	rm -f display control
+	rm -f jvc control
 
 vlc_minimal: vlc_minimal.o
-	$(CC) $(CFLAGS) -o vlc_minimal vlc_minimal.c -lvlc -lpthread
+	$(CC) $(CFLAGS) -o $@ $^ -lvlc -lpthread
 
 .PHONY: all clean

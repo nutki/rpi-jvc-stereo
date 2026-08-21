@@ -101,15 +101,6 @@ int gpio_write(unsigned int pin, int value) {
 
 static font4_t font;  // Global font instance
 static font4_t fa;    // Global FontAwesome instance
-#define FA_WIFI "\uf1eb"
-#define FA_VOLUME_UP "\uf028"
-#define FA_VOLUME_DOWN "\uf027"
-#define FA_VOLUME_OFF "\uf026"
-#define FA_VOLUME_MUTE "\uf6a9"
-#define FA_FAN "\uf863"
-#define FA_TEMPERATURE_HIGH "\uf769"
-#define FA_MUSIC "\uf001"
-#define FA_PLUG "\uf1e6"
 
 // Load PNG file and convert RGB24 to 4-bit grayscale
 // Returns NULL on error, caller must free() the returned buffer
@@ -174,7 +165,8 @@ uint8_t* load_png_as_gray4(const char* filename, int* width, int* height) {
     png_read_image(png, row_pointers);
     
     // Allocate output buffer for 4-bit grayscale
-    uint8_t* gray_data = (uint8_t*)malloc((*width) * (*height));
+    int pitch = (*width + 1) / 2; // Each byte holds two pixels
+    uint8_t* gray_data = (uint8_t*)malloc(pitch * (*height));
     
     // Convert RGB24 to 4-bit grayscale using luminosity formula
     // Gray = 0.299*R + 0.587*G + 0.114*B
@@ -190,7 +182,11 @@ uint8_t* load_png_as_gray4(const char* filename, int* width, int* height) {
             uint8_t gray8 = (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
             
             // Convert to 4-bit (0-15)
-            gray_data[y * (*width) + x] = gray8 >> 4;
+            if (x % 2 == 0) {
+                gray_data[y * pitch + x / 2] = gray8 & 0xF0; // High nibble
+            } else {
+                gray_data[y * pitch + x / 2] |= (gray8 >> 4); // Low nibble
+            }
         }
     }
     
@@ -217,7 +213,7 @@ FrameBuffer* framebuffer_create_with_buffer(int width, int height, uint8_t* buff
     
     fb->width = width;
     fb->height = height;
-    fb->buffer_size = (width * height) / 2;  // 4-bit per pixel
+    fb->buffer_size = (width + 1) / 2 * height;  // 4-bit per pixel
     fb->buffer = buffer;
     
     if (!fb->buffer) {
@@ -229,7 +225,8 @@ FrameBuffer* framebuffer_create_with_buffer(int width, int height, uint8_t* buff
 }
 
 FrameBuffer* framebuffer_create(int width, int height) {
-    uint8_t* buffer = (uint8_t*)calloc((width * height) / 2, 1);
+    int pitch = (width + 1) / 2;
+    uint8_t* buffer = (uint8_t*)calloc(pitch * height, 1);
     return framebuffer_create_with_buffer(width, height, buffer);
 }
 
@@ -256,8 +253,8 @@ void framebuffer_destroy(FrameBuffer* fb) {
 
 void framebuffer_set_pixel(FrameBuffer* fb, int x, int y, uint8_t color) {
     if (x < 0 || x >= fb->width || y < 0 || y >= fb->height) return;
-    
-    int index = (y * fb->width + x) / 2;
+    int pitch = (fb->width + 1) / 2;
+    int index = y * pitch + x / 2;
     if (x % 2 == 0) {
         fb->buffer[index] = (fb->buffer[index] & 0x0F) | (color << 4);
     } else {
@@ -267,8 +264,8 @@ void framebuffer_set_pixel(FrameBuffer* fb, int x, int y, uint8_t color) {
 
 uint8_t framebuffer_get_pixel(FrameBuffer* fb, int x, int y) {
     if (x < 0 || x >= fb->width || y < 0 || y >= fb->height) return 0;
-    
-    int index = (y * fb->width + x) / 2;
+    int pitch = (fb->width + 1) / 2;
+    int index = y * pitch + x / 2;
     if (x % 2 == 0) {
         return fb->buffer[index] >> 4;
     } else {
@@ -410,7 +407,6 @@ SH1122* sh1122_create(const char* spi_device, int width, int height, int offset)
     ioctl(oled->spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
     
     // Setup GPIO pins
-    printf("Setting up GPIO pins...\n");
     if (gpio_setup() < 0) {
         fprintf(stderr, "Failed to setup GPIO pins\n");
         close(oled->spi_fd);
@@ -420,7 +416,6 @@ SH1122* sh1122_create(const char* spi_device, int width, int height, int offset)
     }
     
     // Reset display
-    printf("Resetting display...\n");
     gpio_write(GPIO_RES, 1);
     usleep(1000);
     gpio_write(GPIO_RES, 0);
@@ -447,7 +442,6 @@ SH1122* sh1122_create(const char* spi_device, int width, int height, int offset)
         SET_DISP | 0x01         // Display on
     };
     
-    printf("Sending initialization commands...\n");
     for (int i = 0; i < sizeof(init_cmds); i++) {
         sh1122_write_cmd(oled, init_cmds[i]);
     }
@@ -455,7 +449,6 @@ SH1122* sh1122_create(const char* spi_device, int width, int height, int offset)
     // Clear display
     framebuffer_fill(oled->fb, 0);
     
-    printf("Display initialized successfully\n");
     return oled;
 }
 
@@ -498,7 +491,7 @@ void sh1122_flip(SH1122* oled) {
 void sh1122_invert(SH1122* oled, int invert) {
     sh1122_write_cmd(oled, SET_NORM_INV | (invert & 1));
 }
-
+#if 0
 // Main program
 int main(int argc, char *argv[]) {
     framebuffer_init();  // Initialize fonts
@@ -639,3 +632,4 @@ int main(int argc, char *argv[]) {
     
     return 0;
 }
+#endif
