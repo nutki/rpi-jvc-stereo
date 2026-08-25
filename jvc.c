@@ -2,11 +2,27 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 #include <time.h>
 #include "display.h"
 #include "wlan_check.h"
 SH1122* oled;
 FrameBuffer* fb;
+static volatile sig_atomic_t shutdown_requested = 0;
+void display_show(void);
+
+static void handle_shutdown_signal(int sig) {
+    shutdown_requested = 1;
+}
+
+static void display_shutdown_screen(void) {
+    if (!fb) return;
+
+    framebuffer_fill(fb, 0);
+    framebuffer_draw_text(fb, 16, 68, 30, "Shutting down...");
+    display_show();
+}
+
 void display_init() {
     framebuffer_init();
     oled = sh1122_create("/dev/spidev0.0", 256, 48, 2);
@@ -143,13 +159,15 @@ void update_window(struct window_t* w) {
     }
 }
 int main(int argc, char *argv[]) {
+    signal(SIGTERM, handle_shutdown_signal);
+    signal(SIGINT, handle_shutdown_signal);
     display_init();
     windows_init();
 
     if (argc > 1) {
         const char* filename = argv[1];
         printf("Watching PNG file: %s (reloading at 50fps)\n", filename);
-        while (1) {
+        while (!shutdown_requested) {
             FrameBuffer *img_fb = framebuffer_create_from_png(filename);
             if (img_fb) {
                 framebuffer_blit(fb, img_fb, (256 - img_fb->width) / 2, (48 - img_fb->height) / 2);
@@ -205,10 +223,10 @@ int main(int argc, char *argv[]) {
     
     // Create source framebuffer from image data
     FrameBuffer* fb_logo = framebuffer_create_with_buffer(32, 40, image_data);
-    struct window_t* current_window = &windows[3];
+    struct window_t* current_window = &windows[2];
     
     // Animation loop
-    for (int step = 0; step <= 128 + 16 || 1; step++) {
+    for (int step = 0; !shutdown_requested; step++) {
         update_window(current_window);
         framebuffer_blit(fb, current_window->fb, 0, 0);
         // framebuffer_fill(fb, 0);
@@ -233,9 +251,10 @@ int main(int argc, char *argv[]) {
     }
     
     // Clear display at the end
-    framebuffer_fill(fb, 0);
-    display_show();
-    
+    // framebuffer_fill(fb, 0);
+    // display_show();
+    if (shutdown_requested) display_shutdown_screen();
+
     }
     
     display_close();

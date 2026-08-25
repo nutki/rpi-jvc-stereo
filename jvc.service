@@ -1,0 +1,15 @@
+[Unit]
+Description=JVC front-panel display
+After=local-fs.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/jvc
+ExecStart=/home/pi/jvc/jvc
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
