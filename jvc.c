@@ -4,12 +4,41 @@
 #include <string.h>
 #include <signal.h>
 #include <time.h>
+#include <pthread.h>
 #include "display.h"
 #include "wlan_check.h"
+#include "control.h"
 SH1122* oled;
 FrameBuffer* fb;
 static volatile sig_atomic_t shutdown_requested = 0;
 void display_show(void);
+
+static int current_window_idx;
+#define max_window 4
+static int control_event_callback(int ev_type, int value) {
+    static int direct_flag, sa_bass_flag, standby_flag;
+    // print_event(ev_type, value);
+    if (ev_type == EVENT_KEY_PRESSED) {
+        if (value == JVC_KEY_DIRECT) control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
+        if (value == JVC_KEY_S_A_BASS) control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
+        if (value == JVC_KEY_STANDBY) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
+        if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
+        if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
+    }
+    if (ev_type == EVENT_REMOTE_PRESSED) {
+        if (value == JVC_REMOTE_KEY_POWER) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
+        if (value == JVC_REMOTE_KEY_CH_DOWN) current_window_idx = (current_window_idx + max_window - 1) % max_window;
+        if (value == JVC_REMOTE_KEY_CH_UP) current_window_idx = (current_window_idx + 1) % max_window;
+    }
+    return shutdown_requested;
+}
+
+static void *control_thread_main(void *arg) {
+    (void)arg;
+    control_event_loop(control_event_callback);
+    shutdown_requested = 1;
+    return NULL;
+}
 
 static void handle_shutdown_signal(int sig) {
     shutdown_requested = 1;
@@ -131,7 +160,7 @@ void update_wifi_status(struct window_t* w) {
         framebuffer_draw_text(w->fb, 12, 20, (48+12)/2, "WiFi N/A");
     }
 }
-struct window_t  windows[] = {{
+struct window_t  windows[max_window] = {{
     .update_func = update_time,
     .update_frequency_s = 1
 }, {
@@ -159,10 +188,17 @@ void update_window(struct window_t* w) {
     }
 }
 int main(int argc, char *argv[]) {
+    pthread_t control_thread;
     signal(SIGTERM, handle_shutdown_signal);
     signal(SIGINT, handle_shutdown_signal);
     display_init();
     windows_init();
+
+    if (pthread_create(&control_thread, NULL, control_thread_main, NULL) != 0) {
+        fprintf(stderr, "Failed to start control thread\n");
+        display_close();
+        return 1;
+    }
 
     if (argc > 1) {
         const char* filename = argv[1];
@@ -223,10 +259,10 @@ int main(int argc, char *argv[]) {
     
     // Create source framebuffer from image data
     FrameBuffer* fb_logo = framebuffer_create_with_buffer(32, 40, image_data);
-    struct window_t* current_window = &windows[2];
     
     // Animation loop
     for (int step = 0; !shutdown_requested; step++) {
+        struct window_t* current_window = &windows[current_window_idx];
         update_window(current_window);
         framebuffer_blit(fb, current_window->fb, 0, 0);
         // framebuffer_fill(fb, 0);

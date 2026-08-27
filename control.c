@@ -55,6 +55,11 @@ void ir_rx_close(void) {
     ir_rx_fd = -1;
 }
 
+void control_set_led(int led, int value) {
+    if (led < 0 || led > 2) return;
+    gpiod_line_request_set_value(request, gpio_leds[led], value & 1);
+}
+
 int control_init(void) {
     chip = gpiod_chip_open("/dev/gpiochip0");
     if (!chip) {
@@ -94,9 +99,6 @@ int control_init(void) {
         return 1;
     }
 
-    for (int i = 0; i < 3; i++) {
-        gpiod_line_request_set_value(request, gpio_leds[i], GPIOD_LINE_VALUE_ACTIVE);
-    }
     if (ir_rx_init()) {
         return 1;
     }
@@ -174,7 +176,6 @@ int print_event(int ev_type, int value) {
             printf("Jack detect event: %d\n", value);
             break;
         case EVENT_KEY_PRESSED:
-            if (value == JVC_KEY_STANDBY) return 1;
         case EVENT_KEY_RELEASED:
             printf("Key event: %s, key: %s\n", ev_type == EVENT_KEY_PRESSED ? "pressed" : "released", key_labels[value]);
             break;
@@ -183,10 +184,6 @@ int print_event(int ev_type, int value) {
             printf("Remote event: scancode=0x%x%s\n", value, ev_type == EVENT_REMOTE_REPEAT ? " (repeat)" : "");
             break;
     }
-    return 0;
-}
-int main(void) {
-    control_event_loop(print_event);
     return 0;
 }
 

@@ -19,5 +19,16 @@
 #define JVC_KEY_S_A_BASS 9
 #define JVC_KEY_BAND 10
 #define JVC_KEY_STANDBY 11
+#define JVC_LED_S_A_BASS 0
+#define JVC_LED_STANDBY 1
+#define JVC_LED_DIRECT 2
+#define JVC_REMOTE_KEY_POWER 0x0c
+#define JVC_REMOTE_KEY_CH_UP 0x10
+#define JVC_REMOTE_KEY_CH_DOWN 0x11
+#define JVC_REMOTE_KEY_VOL_UP 0x20
+#define JVC_REMOTE_KEY_VOL_DOWN 0x21
+
 void control_event_loop(int (*event_callback)(int ev_type, int value));
+void control_set_led(int led, int value);
+int print_event(int ev_type, int value);
 #endif
