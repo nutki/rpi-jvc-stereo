@@ -15,6 +15,7 @@ typedef struct {
 
 int font4_init(font4_t *f, const char *ttf_path);
 void font4_destroy(font4_t *f);
+void font4_set_color(int c);
 
 void render_text(font4_t *f,
                  unsigned char *buf,

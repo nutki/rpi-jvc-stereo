@@ -3,8 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 
+static int draw_color = 16;
+void font4_set_color(int c) {
+    draw_color = c;
+}
+
 static inline unsigned char to4(unsigned char v) {
-    return v >> 4;   // convert 0–255 → 0–15
+    return (v * draw_color) >> 8;
 }
 
 static inline void set_px4(unsigned char *buf, int pitch,

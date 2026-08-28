@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <time.h>
 #include <pthread.h>
+#include <sys/timex.h>
 #include "display.h"
 #include "wlan_check.h"
 #include "control.h"
@@ -94,6 +95,13 @@ struct window_t {
 void update_time(struct window_t* w) {
     framebuffer_fill(w->fb, 0);    
     time_t now = time(NULL);
+    struct timex txc;
+    txc.modes = 0;
+    int status = ntp_adjtime(&txc);
+    if (status == TIME_ERROR) {
+        framebuffer_draw_text(w->fb, 16, 16, 24+8, "NTP Error");
+        return;
+    }
     struct tm *tm_info = localtime(&now);
     char time_str[9];
     strftime(time_str, sizeof(time_str), "%H:%M", tm_info);
@@ -125,8 +133,12 @@ void update_temp_and_fan(struct window_t* w) {
     
     framebuffer_draw_icon(w->fb, 20, 10, (48-20)/2, FA_TEMPERATURE_HIGH);
     framebuffer_draw_text_fmt(w->fb, 20, 40, (48+20)/2, "%3.1f", temperature/1000.0);
-    framebuffer_draw_icon(w->fb, 20, 138, (48-20)/2, FA_FAN);    
-    framebuffer_draw_text_fmt(w->fb, 20, 168, (48+20)/2, "%d", fan_speed);
+    for (int i = 0; i < 4; i++) {
+        font4_set_color(i < fan_speed ? 16 : 2);
+        framebuffer_draw_icon(w->fb, 20, 138 + i * 24, (48-20)/2, FA_FAN);
+    }
+    font4_set_color(16);
+    framebuffer_draw_icon(w->fb, 20, 138, (48-20)/2, FA_FAN);
 }
 int read_process_output(const char* command, char* buffer, size_t buffer_size) {
     FILE* pipe = popen(command, "r");
