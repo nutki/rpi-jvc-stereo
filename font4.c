@@ -17,6 +17,7 @@ static inline void set_px4(unsigned char *buf, int pitch,
                            int buf_w, int buf_h,
                            int x, int y, unsigned char v4)
 {
+    if (!v4) return;
     if ((unsigned)x >= (unsigned)buf_w ||
         (unsigned)y >= (unsigned)buf_h)
         return;
