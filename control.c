@@ -26,14 +26,52 @@ static int key_state[3][4] = {{0}};
 static int jack_detect_state = -1;
 
 static int ir_rx_fd = -1;
+static int ir_tx_fd = -1;
 static int ir_last_code = -1;
 static int ir_last_toggle = -1;
 
-int ir_rx_init(void) {
+#define IR_TECHNICS_COUNT (2 + (48 * 2) + 1)
+static int ir_technics_encode(uint64_t code, uint32_t *buffer, size_t capacity) {
+    uint8_t xor_result;
+
+    if (capacity < IR_TECHNICS_COUNT) return -1;
+
+    if (code < UINT64_C(0x1000000))
+        code += UINT64_C(0xbffbfa000000);
+
+    xor_result = (uint8_t)code ^ (uint8_t)(code >> 8) ^
+                 (uint8_t)(code >> 16) ^ (uint8_t)(code >> 24);
+    if (xor_result != 0) {
+        fprintf(stderr, "Warning: correcting the last byte for XOR checksum -> %08lx\n", code);
+        code ^= xor_result;
+    }
+
+    buffer[0] = 3550;
+    buffer[1] = 1650;
+    for (size_t bit = 0; bit < 48; bit++) {
+        buffer[2 + bit * 2] = 497;
+        buffer[3 + bit * 2] = (code & (UINT64_C(1) << (47 - bit))) ? 347 : 1218;
+    }
+    buffer[IR_TECHNICS_COUNT - 1] = 497;
+    return IR_TECHNICS_COUNT;
+}
+
+int ir_init(void) {
     ir_rx_fd = open("/dev/lirc1", O_RDONLY | O_NONBLOCK);
     if (ir_rx_fd < 0) return 1;
     unsigned int protos = LIRC_MODE_SCANCODE;
-    if (ioctl(ir_rx_fd, LIRC_SET_REC_MODE, &protos)) return 1;    
+    if (ioctl(ir_rx_fd, LIRC_SET_REC_MODE, &protos)) return 1;
+    ir_tx_fd = open("/dev/lirc0", O_WRONLY);
+    if (ir_tx_fd < 0) {
+        perror("open");
+        return 1;
+    }
+    unsigned int mode = LIRC_MODE_PULSE;
+    if (ioctl(ir_tx_fd, LIRC_SET_SEND_MODE, &mode) < 0) {
+        perror("LIRC_SET_SEND_MODE");
+        close(ir_tx_fd);
+        return 1;
+    }
     return 0;
 }
 int ir_rx_read() {
@@ -50,9 +88,28 @@ int ir_rx_read() {
     }
     return -1;
 }
-void ir_rx_close(void) {
+void ir_close(void) {
     if (ir_rx_fd >= 0) close(ir_rx_fd);
     ir_rx_fd = -1;
+    if (ir_tx_fd >= 0) close(ir_tx_fd);
+    ir_tx_fd = -1;
+}
+
+void ir_tx_send(uint64_t code) {
+    uint32_t buffer[IR_TECHNICS_COUNT];
+    unsigned int carrier = 38000;
+    if (ir_technics_encode(code, buffer, IR_TECHNICS_COUNT) < 0) {
+        fprintf(stderr, "Unable to build IR pulse buffer\n");
+        return;
+    }
+    if (ioctl(ir_tx_fd, LIRC_SET_SEND_CARRIER, &carrier) < 0) {
+        perror("LIRC_SET_SEND_CARRIER");
+        return;
+    }
+    if (write(ir_tx_fd, buffer, sizeof(buffer)) != (ssize_t)sizeof(buffer)) {
+        perror("write");
+        return;
+    }
 }
 
 void control_set_led(int led, int value) {
@@ -99,7 +156,7 @@ int control_init(void) {
         return 1;
     }
 
-    if (ir_rx_init()) {
+    if (ir_init()) {
         return 1;
     }
     return 0;
@@ -204,5 +261,5 @@ void close_control(void) {
     gpiod_line_settings_free(out_high_settings);
     gpiod_line_settings_free(in_hiz_settings);
     gpiod_chip_close(chip);
-    ir_rx_close();
+    ir_close();
 }

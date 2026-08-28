@@ -24,12 +24,23 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_KEY_STANDBY) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
         if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
         if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
+        if (value == JVC_KEY_BAND) ir_tx_send(IR_TECHNICS_POWER);
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
         if (value == JVC_REMOTE_KEY_CH_DOWN) current_window_idx = (current_window_idx + max_window - 1) % max_window;
         if (value == JVC_REMOTE_KEY_CH_UP) current_window_idx = (current_window_idx + 1) % max_window;
     }
+    if (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT) {
+        if (value == JVC_REMOTE_KEY_VOL_UP) ir_tx_send(IR_TECHNICS_VOL_UP);
+        if (value == JVC_REMOTE_KEY_VOL_DOWN) ir_tx_send(IR_TECHNICS_VOL_DOWN);
+    }
+    if (ev_type == EVENT_ENCODER_PLUS) {
+        ir_tx_send(IR_TECHNICS_INPUT_VDP);
+        usleep(10000);
+        ir_tx_send(IR_TECHNICS_VOL_UP);
+    }
+    if (ev_type == EVENT_ENCODER_MINUS) ir_tx_send(IR_TECHNICS_VOL_DOWN);
     return shutdown_requested;
 }
 

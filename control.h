@@ -27,8 +27,14 @@
 #define JVC_REMOTE_KEY_CH_DOWN 0x11
 #define JVC_REMOTE_KEY_VOL_UP 0x20
 #define JVC_REMOTE_KEY_VOL_DOWN 0x21
+#define IR_TECHNICS_POWER 0xc7437e
+#define IR_TECHNICS_VOL_UP 0xFFFBFE
+#define IR_TECHNICS_VOL_DOWN 0xFF7B7E
+#define IR_TECHNICS_INPUT_VDP 0xFFBABF
+#define IR_TECHNICS_INPUT_DAT 0xFFE600
 
 void control_event_loop(int (*event_callback)(int ev_type, int value));
 void control_set_led(int led, int value);
+void ir_tx_send(uint64_t code);
 int print_event(int ev_type, int value);
 #endif
