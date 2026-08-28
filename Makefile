@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -O2 $(shell pkg-config --cflags freetype2) $(shell pkg-config --cflags libnl-3.0)
-LDLIBS = -lgpiod -lpng -lfreetype -lpthread $(shell pkg-config --libs libnl-3.0 libnl-genl-3.0)
+LDLIBS = -lgpiod -lpng -lfreetype -lpthread -lm $(shell pkg-config --libs libnl-3.0 libnl-genl-3.0)
 
 # Targets
 all: jvc control

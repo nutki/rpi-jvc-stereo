@@ -1,4 +1,5 @@
 #include "font4.h"
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,15 +59,42 @@ void render_text(font4_t *f,
                  int pitch,
                  const char *text)
 {
+    render_text_angle(f, buf, buf_w, buf_h, font_size, x, y, max_w,
+                      pitch, 0.0, text);
+}
+
+void render_text_angle(font4_t *f,
+                       unsigned char *buf,
+                       int buf_w, int buf_h,
+                       int font_size,
+                       int x, int y,
+                       int max_w,
+                       int pitch,
+                       double angle_degrees,
+                       const char *text)
+{
     FT_Set_Pixel_Sizes(f->face, 0, font_size);
 
-    int pen_x = x;
-    int pen_y = y;
+    double angle = angle_degrees * (3.14159265358979323846 / 180.0);
+    double angle_cos = cos(angle);
+    double angle_sin = sin(angle);
+    FT_Matrix transform = {
+        (FT_Fixed)lround(angle_cos * 65536.0),
+        (FT_Fixed)lround(angle_sin * 65536.0),
+        (FT_Fixed)lround(-angle_sin * 65536.0),
+        (FT_Fixed)lround(angle_cos * 65536.0)
+    };
+    FT_Set_Transform(f->face, &transform, NULL);
+    FT_Vector pen = {
+        (FT_Pos)x << 6,
+        (FT_Pos)y << 6
+    };
 
     for (const unsigned char *p = (const unsigned char*)text; *p; p++) {
         if (*p == '\n') {
-            pen_x = x;
-            pen_y += font_size;
+            pen.x = (FT_Pos)x << 6;
+            pen.x -= (FT_Pos)lround(font_size * angle_sin * 64.0);
+            pen.y += (FT_Pos)lround(font_size * angle_cos * 64.0);
             continue;
         }
 
@@ -85,14 +113,26 @@ void render_text(font4_t *f,
         } else {
             continue;  // Invalid UTF-8, skip
         }
-        if (FT_Load_Char(f->face, utf8_decoded, FT_LOAD_RENDER))
+        int base_x = (int)(pen.x >> 6);
+        int base_y = (int)(pen.y >> 6);
+        FT_Vector delta = {
+            pen.x - ((FT_Pos)base_x << 6),
+            -(pen.y - ((FT_Pos)base_y << 6))
+        };
+        FT_Set_Transform(f->face, &transform, &delta);
+
+        FT_Int32 load_flags = FT_LOAD_RENDER;
+        if (angle_degrees != 0.0)
+            load_flags |= FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP;
+
+        if (FT_Load_Char(f->face, utf8_decoded, load_flags))
             continue;
 
         FT_GlyphSlot g = f->face->glyph;
         FT_Bitmap *bm = &g->bitmap;
 
-        int gx = pen_x + g->bitmap_left;
-        int gy = pen_y - g->bitmap_top;
+        int gx = base_x + g->bitmap_left;
+        int gy = base_y - g->bitmap_top;
 
         for (int j = 0; j < bm->rows; j++) {
             for (int i = 0; i < bm->width; i++) {
@@ -106,10 +146,13 @@ void render_text(font4_t *f,
             }
         }
 
-        pen_x += g->advance.x >> 6;
-        if (pen_x >= x + max_w)
+        pen.x += g->advance.x;
+        pen.y -= g->advance.y;
+        if ((pen.x >> 6) >= x + max_w)
             break;
     }
+
+    FT_Set_Transform(f->face, NULL, NULL);
 }
 
 void render_textf(font4_t *f,
@@ -121,11 +164,26 @@ void render_textf(font4_t *f,
                   int pitch,
                   const char *fmt, ...)
 {
+    render_textf_angle(f, buf, buf_w, buf_h, font_size, x, y, max_w,
+                       pitch, 0.0, fmt);
+}
+
+void render_textf_angle(font4_t *f,
+                        unsigned char *buf,
+                        int buf_w, int buf_h,
+                        int font_size,
+                        int x, int y,
+                        int max_w,
+                        int pitch,
+                        double angle_degrees,
+                        const char *fmt, ...)
+{
     char tmp[1024];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(tmp, sizeof(tmp), fmt, ap);
     va_end(ap);
 
-    render_text(f, buf, buf_w, buf_h, font_size, x, y, max_w, pitch, tmp);
+    render_text_angle(f, buf, buf_w, buf_h, font_size, x, y, max_w, pitch,
+                      angle_degrees, tmp);
 }

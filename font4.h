@@ -26,6 +26,17 @@ void render_text(font4_t *f,
                  int pitch,
                  const char *text);
 
+/* Positive angles rotate clockwise in the framebuffer's top-left-origin coordinates. */
+void render_text_angle(font4_t *f,
+                       unsigned char *buf,
+                       int buf_w, int buf_h,
+                       int font_size,
+                       int x, int y,
+                       int max_w,
+                       int pitch,
+                       double angle_degrees,
+                       const char *text);
+
 void render_textf(font4_t *f,
                   unsigned char *buf,
                   int buf_w, int buf_h,
@@ -34,6 +45,16 @@ void render_textf(font4_t *f,
                   int max_w,
                   int pitch,
                   const char *fmt, ...);
+
+void render_textf_angle(font4_t *f,
+                        unsigned char *buf,
+                        int buf_w, int buf_h,
+                        int font_size,
+                        int x, int y,
+                        int max_w,
+                        int pitch,
+                        double angle_degrees,
+                        const char *fmt, ...);
 
 #ifdef __cplusplus
 }

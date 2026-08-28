@@ -332,10 +332,18 @@ void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_
 }
 
 static void framebuffer_draw_text_with_font(FrameBuffer* fb, font4_t* font, int size, int x, int y, const char* text) {
-    render_text(font, fb->buffer, fb->width, fb->height, size, x, y, fb->width - x, (fb->width + 1) / 2, text);
+    render_text_angle(font, fb->buffer, fb->width, fb->height, size, x, y,
+                      fb->width - x, (fb->width + 1) / 2, 0.0, text);
+}
+static void framebuffer_draw_text_with_font_angle(FrameBuffer* fb, font4_t* font, int size, int x, int y, double angle_degrees, const char* text) {
+    render_text_angle(font, fb->buffer, fb->width, fb->height, size, x, y,
+                      fb->width - x, (fb->width + 1) / 2, angle_degrees, text);
 }
 void framebuffer_draw_text(FrameBuffer* fb, int size, int x, int y, const char* text) {
     framebuffer_draw_text_with_font(fb, &font, size, x, y, text);
+}
+void framebuffer_draw_text_angle(FrameBuffer* fb, int size, int x, int y, double angle_degrees, const char* text) {
+    framebuffer_draw_text_with_font_angle(fb, &font, size, x, y, angle_degrees, text);
 }
 void framebuffer_draw_text_fmt(FrameBuffer* fb, int size, int x, int y, const char* fmt, ...) {
     char buffer[256];

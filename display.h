@@ -29,6 +29,8 @@ void framebuffer_rect(FrameBuffer* fb, int x, int y, int w, int h, uint8_t color
 void framebuffer_fill_rect(FrameBuffer* fb, int x, int y, int w, int h, uint8_t color);
 void framebuffer_blit(FrameBuffer* dest, FrameBuffer* src, int dest_x, int dest_y);
 void framebuffer_draw_text(FrameBuffer* fb, int size, int x, int y, const char* text);
+void framebuffer_draw_text_angle(FrameBuffer* fb, int size, int x, int y,
+                                 double angle_degrees, const char* text);
 void framebuffer_draw_text_fmt(FrameBuffer* fb, int size, int x, int y, const char* fmt, ...);
 void framebuffer_draw_icon(FrameBuffer* fb, int size, int x, int y, const char* icon);
 #define FA_WIFI "\uf1eb"
