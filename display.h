@@ -42,6 +42,8 @@ void framebuffer_draw_icon(FrameBuffer* fb, int size, int x, int y, const char* 
 #define FA_TEMPERATURE_HIGH "\uf769"
 #define FA_MUSIC "\uf001"
 #define FA_PLUG "\uf1e6"
+#define FA_FILM "\uf008"
+#define FA_DOWNLOAD "\uf019"
 
 // SH1122 OLED display structure and functions
 typedef struct {

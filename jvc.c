@@ -15,7 +15,7 @@ static volatile sig_atomic_t shutdown_requested = 0;
 void display_show(void);
 
 static int current_window_idx;
-#define max_window 4
+#define max_window 6
 static int control_event_callback(int ev_type, int value) {
     static int direct_flag, sa_bass_flag, standby_flag;
     // print_event(ev_type, value);
@@ -99,7 +99,7 @@ void update_time(struct window_t* w) {
     txc.modes = 0;
     int status = ntp_adjtime(&txc);
     if (status == TIME_ERROR) {
-        framebuffer_draw_text(w->fb, 16, 16, 24+8, "NTP Error");
+        framebuffer_draw_text(w->fb, 16, 16, 24+8, "System starting...");
         return;
     }
     struct tm *tm_info = localtime(&now);
@@ -154,6 +154,77 @@ int read_process_output(const char* command, char* buffer, size_t buffer_size) {
     }
     return 0;
 }
+int read_process_output_all(const char* command, char* buffer, size_t buffer_size) {
+    FILE* pipe = popen(command, "r");
+    if (!pipe || buffer_size == 0) return -1;
+    size_t bytes_read = fread(buffer, 1, buffer_size - 1, pipe);
+    int command_status = pclose(pipe);
+    buffer[bytes_read] = '\0';
+    return bytes_read > 0 && command_status == 0 ? 0 : -1;
+}
+void update_jellyfin_status(struct window_t* w) {
+    char status[512];
+    char device_name[128];
+    char item_name[256];
+    const char* command = "wget -qO- --timeout=2 --header=\"X-Emby-Authorization: MediaBrowser Token=\\\"$(cat jellyfin-token.txt)\\\"\" http://localhost:8096/Sessions | jq -r 'if length > 0 then [.[0].DeviceName // \"\", .[0].NowPlayingItem.Name // \"\"] | @tsv else empty end'";
+
+    framebuffer_fill(w->fb, 0);
+    if (read_process_output_all(command, status, sizeof(status))) {
+        framebuffer_draw_text(w->fb, 12, 8, 24, "Jellyfin unavailable");
+        return;
+    }
+    char* separator = strchr(status, '\t');
+    if (!separator) {
+        framebuffer_draw_text(w->fb, 12, 8, 24, "No Jellyfin session");
+        return;
+    }
+    *separator = '\0';
+    snprintf(device_name, sizeof(device_name), "%.*s", (int)sizeof(device_name) - 1, status);
+    snprintf(item_name, sizeof(item_name), "%s", separator + 1);
+    item_name[strcspn(item_name, "\r\n")] = '\0';
+
+    framebuffer_draw_icon(w->fb, 16, 0, (48-16)/2, FA_FILM);
+    framebuffer_draw_text_fmt(w->fb, 10, 24, 13, "%s", device_name);
+    if (item_name[0])
+        framebuffer_draw_text_fmt(w->fb, 18, 24, 36, "%s", item_name);
+    else {
+        font4_set_color(5);
+        framebuffer_draw_text(w->fb, 18, 24, 36, "Nothing playing");
+        font4_set_color(16);
+    }
+}
+void update_transmission_status(struct window_t* w) {
+    char response[4096];
+    const char* command = "transmission-remote -n transmission:transmission -j -l 2>/dev/null | jq -r '.arguments.torrents[] | select(.isFinished != true) | [(.percentDone * 100), (.rateDownload / 1000)] | @tsv'";
+    int active_count = 0;
+    char* save_line = NULL;
+
+    framebuffer_fill(w->fb, 0);
+    if (read_process_output_all(command, response, sizeof(response))) {
+        framebuffer_draw_text(w->fb, 12, 8, 24, "Transmission unavailable");
+        return;
+    }
+
+    char* line = strtok_r(response, "\n", &save_line);
+    while (line) {
+        char completion[16], download_rate[16];
+        if (sscanf(line, "%15s %15s", completion, download_rate) == 2) {
+            if (active_count < 2) {
+                framebuffer_draw_text_fmt(w->fb, 12, 24, 18 + active_count * 16,
+                                          "%s%% %s kB/s", completion, download_rate);
+            }
+            active_count++;
+        }
+        line = strtok_r(NULL, "\n", &save_line);
+    }
+    if (!active_count) {
+        framebuffer_draw_text(w->fb, 12, 8, 24, "No active tasks");
+        return;
+    }
+    framebuffer_draw_icon(w->fb, 16, 0, 0, FA_DOWNLOAD);
+    if (active_count > 2)
+        framebuffer_draw_text_fmt(w->fb, 10, 184, 42, "+%d", active_count - 2);
+}
 void update_power_usage_monitor(struct window_t* w) {
     framebuffer_fill(w->fb, 0);
     char power_buf[32];
@@ -195,6 +266,12 @@ struct window_t  windows[max_window] = {{
 }, {
     .update_func = update_wifi_status,
     .update_frequency_s = 1
+}, {
+    .update_func = update_jellyfin_status,
+    .update_frequency_s = 5
+}, {
+    .update_func = update_transmission_status,
+    .update_frequency_s = 5
 }};
 void windows_init() {
     for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
