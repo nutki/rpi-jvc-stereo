@@ -160,34 +160,49 @@ int read_process_output_all(const char* command, char* buffer, size_t buffer_siz
     size_t bytes_read = fread(buffer, 1, buffer_size - 1, pipe);
     int command_status = pclose(pipe);
     buffer[bytes_read] = '\0';
-    return bytes_read > 0 && command_status == 0 ? 0 : -1;
+    return command_status == 0 ? 0 : -1;
 }
 void update_jellyfin_status(struct window_t* w) {
     char status[512];
     char device_name[128];
     char item_name[256];
-    const char* command = "wget -qO- --timeout=2 --header=\"X-Emby-Authorization: MediaBrowser Token=\\\"$(cat jellyfin-token.txt)\\\"\" http://localhost:8096/Sessions | jq -r 'if length > 0 then [.[0].DeviceName // \"\", .[0].NowPlayingItem.Name // \"\"] | @tsv else empty end'";
+    const char* command = "wget -qO- --timeout=2 --header=\"X-Emby-Authorization: MediaBrowser Token=\\\"$(cat jellyfin-token.txt)\\\"\" http://localhost:8096/Sessions | jq --raw-output0 'map(select(.NowPlayingItem != null and (.NowPlayingItem.Name // \"\") != \"\")) | if length > 0 then .[0] else empty end | [(.DeviceName // \"\"), (.NowPlayingItem.Name // \"\"), (((.PlayState.PositionTicks // 0) / 10000000) | floor), (((.NowPlayingItem.RunTimeTicks // 0) / 10000000) | floor)] | @tsv'";
 
     framebuffer_fill(w->fb, 0);
-    if (read_process_output_all(command, status, sizeof(status))) {
-        framebuffer_draw_text(w->fb, 12, 8, 24, "Jellyfin unavailable");
-        return;
-    }
-    char* separator = strchr(status, '\t');
-    if (!separator) {
-        framebuffer_draw_text(w->fb, 12, 8, 24, "No Jellyfin session");
-        return;
-    }
-    *separator = '\0';
-    snprintf(device_name, sizeof(device_name), "%.*s", (int)sizeof(device_name) - 1, status);
-    snprintf(item_name, sizeof(item_name), "%s", separator + 1);
-    item_name[strcspn(item_name, "\r\n")] = '\0';
-
     framebuffer_draw_icon(w->fb, 16, 0, (48-16)/2, FA_FILM);
+    if (read_process_output_all(command, status, sizeof(status))) {
+        framebuffer_draw_text(w->fb, 12, 24, 24+6, "Jellyfin unavailable");
+        return;
+    }
+
+    char *saveptr = NULL;
+    char *device = strtok_r(status, "\t", &saveptr);
+    char *name = strtok_r(NULL, "\t", &saveptr);
+    char *position = strtok_r(NULL, "\t", &saveptr);
+    char *duration = strtok_r(NULL, "\t", &saveptr);
+    if (!device || !name || !position || !duration) {
+        framebuffer_draw_text(w->fb, 12, 24, 24+6, "No Jellyfin session");
+        return;
+    }
+
+    snprintf(device_name, sizeof(device_name), "%.*s", (int)sizeof(device_name) - 1, device);
+    snprintf(item_name, sizeof(item_name), "%.*s", (int)sizeof(item_name) - 1, name);
+
+    long pos_seconds = strtol(position, NULL, 10);
+    long total_seconds = strtol(duration, NULL, 10);
+    long pos_h = pos_seconds / 3600;
+    long pos_m = (pos_seconds % 3600) / 60;
+    long pos_s = pos_seconds % 60;
+    long total_h = total_seconds / 3600;
+    long total_m = (total_seconds % 3600) / 60;
+    long total_s = total_seconds % 60;
+
     framebuffer_draw_text_fmt(w->fb, 10, 24, 13, "%s", device_name);
-    if (item_name[0])
+    if (item_name[0]) {
         framebuffer_draw_text_fmt(w->fb, 18, 24, 36, "%s", item_name);
-    else {
+        framebuffer_draw_text_fmt(w->fb, 12, 155, 12, "%ld:%02ld:%02ld/%ld:%02ld:%02ld",
+                                 pos_h, pos_m, pos_s, total_h, total_m, total_s);
+    } else {
         font4_set_color(5);
         framebuffer_draw_text(w->fb, 18, 24, 36, "Nothing playing");
         font4_set_color(16);
@@ -195,33 +210,41 @@ void update_jellyfin_status(struct window_t* w) {
 }
 void update_transmission_status(struct window_t* w) {
     char response[4096];
-    const char* command = "transmission-remote -n transmission:transmission -j -l 2>/dev/null | jq -r '.arguments.torrents[] | select(.isFinished != true) | [(.percentDone * 100), (.rateDownload / 1000)] | @tsv'";
+    const char* command = "transmission-remote -n transmission:transmission -j -l 2>/dev/null | jq -r '.arguments.torrents[] | select(.isFinished != true) | [(.leftUntilDone // 0), (.sizeWhenDone // 0), (.rateDownload / 1000), (.name // \"\")] | @tsv'";
     int active_count = 0;
     char* save_line = NULL;
 
     framebuffer_fill(w->fb, 0);
+    framebuffer_draw_icon(w->fb, 16, 0, 16, FA_DOWNLOAD);
     if (read_process_output_all(command, response, sizeof(response))) {
-        framebuffer_draw_text(w->fb, 12, 8, 24, "Transmission unavailable");
+        framebuffer_draw_text(w->fb, 12, 24, 24-6, "Transmission unavailable");
         return;
     }
 
     char* line = strtok_r(response, "\n", &save_line);
     while (line) {
-        char completion[16], download_rate[16];
-        if (sscanf(line, "%15s %15s", completion, download_rate) == 2) {
+        char* line_save = NULL;
+        char* left_until_done = strtok_r(line, "\t", &line_save);
+        char* size_when_done = strtok_r(NULL, "\t", &line_save);
+        char* download_rate = strtok_r(NULL, "\t", &line_save);
+        char* name = strtok_r(NULL, "\t", &line_save);
+
+        if (left_until_done && size_when_done && download_rate && name) {
+            double remaining = strtod(left_until_done, NULL);
+            double total = strtod(size_when_done, NULL);
+            int percent_done = total > 0.0 ? (int)((1.0 - (remaining / total)) * 100.0 + 0.5) : 0;
             if (active_count < 2) {
-                framebuffer_draw_text_fmt(w->fb, 12, 24, 18 + active_count * 16,
-                                          "%s%% %s kB/s", completion, download_rate);
+                framebuffer_draw_text_fmt(w->fb, 12, 24, 14 + active_count * 18,
+                                          "%d%% %.0fkB/s %s", percent_done, strtod(download_rate, NULL), name);
             }
             active_count++;
         }
         line = strtok_r(NULL, "\n", &save_line);
     }
     if (!active_count) {
-        framebuffer_draw_text(w->fb, 12, 8, 24, "No active tasks");
+        framebuffer_draw_text(w->fb, 12, 24, 24+6, "No active tasks");
         return;
     }
-    framebuffer_draw_icon(w->fb, 16, 0, 0, FA_DOWNLOAD);
     if (active_count > 2)
         framebuffer_draw_text_fmt(w->fb, 10, 184, 42, "+%d", active_count - 2);
 }
