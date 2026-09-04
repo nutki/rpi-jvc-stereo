@@ -219,7 +219,7 @@ void update_preview(struct window_t* w) {
     framebuffer_draw_text(w->fb, 10, 228 - direct_flag * preview_header->width, 47, year);
 
     if (direct_flag) for (int y = 0; y < preview_header->height; y++) {
-        uint8_t *dest = w->fb->buffer + y * 128 + 256 - (preview_header->width + 1) / 2;
+        uint8_t *dest = w->fb->buffer + y * 128 + 128 - (preview_header->width + 1) / 2;
         const uint8_t *source = pixels + y * PREVIEW_SHM_WIDTH;
         for (int x = 0; x < preview_header->width; x += 2) {
             uint8_t v0 = source[x] >> 4;
