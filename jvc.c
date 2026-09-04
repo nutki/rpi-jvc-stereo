@@ -6,18 +6,38 @@
 #include <time.h>
 #include <pthread.h>
 #include <sys/timex.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include "display.h"
 #include "wlan_check.h"
 #include "control.h"
+#include "player/preview_shm.h"
 SH1122* oled;
 FrameBuffer* fb;
 static volatile sig_atomic_t shutdown_requested = 0;
 void display_show(void);
 
-static int current_window_idx;
-#define max_window 6
+static int current_window_idx = 6;
+#define max_window 7
+
+void send_mpv_keypress(char key) {
+    char msg[2] = { 'K', key };
+    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(struct sockaddr_un));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, "/tmp/.mpv.socket", sizeof(addr.sun_path) - 1);
+    if (connect(fd, (struct sockaddr *) &addr, sizeof(struct sockaddr_un)) == -1) {
+        perror("connect");
+    }
+    write(fd, msg, 2);
+    close(fd);
+}
+static int direct_flag, sa_bass_flag, standby_flag;
 static int control_event_callback(int ev_type, int value) {
-    static int direct_flag, sa_bass_flag, standby_flag;
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
         if (value == JVC_KEY_DIRECT) control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
@@ -29,10 +49,23 @@ static int control_event_callback(int ev_type, int value) {
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
-        if (value == JVC_REMOTE_KEY_CH_DOWN) current_window_idx = (current_window_idx + max_window - 1) % max_window;
-        if (value == JVC_REMOTE_KEY_CH_UP) current_window_idx = (current_window_idx + 1) % max_window;
+        if (value == JVC_REMOTE_KEY_CH_DOWN) send_mpv_keypress('s');
+        if (value == JVC_REMOTE_KEY_CH_UP) send_mpv_keypress('w');
+        if (value >= JVC_REMOTE_KEY_0 && value <= JVC_REMOTE_KEY_9) send_mpv_keypress('0' + value - JVC_REMOTE_KEY_0);
+        if (value == JVC_REMOTE_KEY_FF) send_mpv_keypress('.');
+        if (value == JVC_REMOTE_KEY_REW) send_mpv_keypress(',');
+        if (value == JVC_REMOTE_KEY_PLAY) send_mpv_keypress(' ');
+        if (value == JVC_REMOTE_KEY_PAUSE) send_mpv_keypress(' ');
+        if (value == JVC_REMOTE_KEY_SUBTITLE) send_mpv_keypress('t');
+        if (value == JVC_REMOTE_KEY_INFO) send_mpv_keypress('i');
+        if (value == JVC_REMOTE_KEY_FORMAT) send_mpv_keypress('x');
+        if (value == JVC_REMOTE_KEY_UP) send_mpv_keypress('d');
+        if (value == JVC_REMOTE_KEY_DOWN) send_mpv_keypress('a');
+        if (value == JVC_REMOTE_KEY_TVGUIDE) send_mpv_keypress('r');
     }
     if (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT) {
+        if (value == JVC_REMOTE_KEY_RIGHT) send_mpv_keypress('>');
+        if (value == JVC_REMOTE_KEY_LEFT) send_mpv_keypress('<');
         if (value == JVC_REMOTE_KEY_VOL_UP) ir_tx_send(IR_TECHNICS_VOL_UP);
         if (value == JVC_REMOTE_KEY_VOL_DOWN) ir_tx_send(IR_TECHNICS_VOL_DOWN);
     }
@@ -92,6 +125,112 @@ struct window_t {
     int32_t update_frequency_s;
 };
 
+static int preview_fd = -1;
+static const struct preview_shm_header *preview_header;
+static const uint8_t *preview_pixels;
+
+static void preview_shm_close_consumer(void) {
+    if (preview_header) {
+        munmap((void *)preview_header, sizeof(struct preview_shm_header) + PREVIEW_SHM_BYTES);
+        preview_header = NULL;
+        preview_pixels = NULL;
+    }
+    if (preview_fd != -1) {
+        close(preview_fd);
+        preview_fd = -1;
+    }
+}
+
+static int preview_shm_open_consumer(void) {
+    struct stat st;
+    void *mapping;
+
+    if (preview_header) return 0;
+
+    preview_fd = shm_open(PREVIEW_SHM_NAME, O_RDONLY, 0);
+    if (preview_fd == -1) return -1;
+    if (fstat(preview_fd, &st) == -1 ||
+        st.st_size < (off_t)(sizeof(struct preview_shm_header) + PREVIEW_SHM_BYTES)) {
+        preview_shm_close_consumer();
+        return -1;
+    }
+    mapping = mmap(NULL, sizeof(struct preview_shm_header) + PREVIEW_SHM_BYTES,
+                   PROT_READ, MAP_SHARED, preview_fd, 0);
+    if (mapping == MAP_FAILED) {
+        preview_shm_close_consumer();
+        return -1;
+    }
+    preview_header = mapping;
+    preview_pixels = (const uint8_t *)mapping + sizeof(*preview_header);
+    return 0;
+}
+
+void update_preview(struct window_t* w) {
+    uint8_t pixels[PREVIEW_SHM_BYTES];
+    uint32_t first_sequence;
+    uint32_t last_sequence;
+    static char metadata[768];
+    static char *artist, *song_name, *year;
+
+    framebuffer_fill(w->fb, 0);
+    if (preview_shm_open_consumer() != 0) return;
+    int position, duration;
+    static char name[NAME_MAX+1];
+    int new_name = 0;
+
+    do {
+        first_sequence = __atomic_load_n(&preview_header->sequence, __ATOMIC_ACQUIRE);
+        if (first_sequence & 1) continue;
+        memcpy(pixels, preview_pixels, sizeof(pixels));
+        position = preview_header->position / 1000;
+        duration = preview_header->duration / 1000;
+        char *name0 = strrchr(preview_header->filename, '/');
+        char *name1 = strrchr(preview_header->filename, '.');
+        if (name0 && name1) {
+            name0++;
+            int len = name1 - name0;
+            if (len != strlen(name) || memcmp(name0, name, len)) {
+                memcpy(name, name0, len);
+                name[len] = 0;
+                new_name = 1;
+            }
+        }
+        last_sequence = __atomic_load_n(&preview_header->sequence, __ATOMIC_ACQUIRE);
+    } while (first_sequence != last_sequence || (last_sequence & 1));
+    if (duration)
+        framebuffer_draw_text_fmt(w->fb, 10, 194 - direct_flag * preview_header->width, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
+    if (new_name) {
+        char command[PATH_MAX + 64];
+        snprintf(command, sizeof(command), "jq --raw-output0 '.artist,.name,.year' \"/media/HDD/music videos/%s.meta.json\"", name);
+        FILE *pipe = popen(command, "r");
+        if (pipe) {
+            size_t bytes_read = fread(metadata, 1, sizeof(metadata) - 1, pipe);
+            metadata[bytes_read] = '\0';
+            pclose(pipe);
+            artist = metadata;
+            song_name = artist + strlen(artist) + 1;
+            year = song_name + strlen(song_name) + 1;
+        }
+    }
+    font4_set_color(8);
+    framebuffer_draw_text(w->fb, 12, 0, 22, artist);
+    font4_set_color(15);
+    framebuffer_draw_text(w->fb, 14, 0, 38, song_name);
+    framebuffer_draw_text(w->fb, 10, 228 - direct_flag * preview_header->width, 47, year);
+
+    if (direct_flag) for (int y = 0; y < preview_header->height; y++) {
+        uint8_t *dest = w->fb->buffer + y * 128 + 256 - (preview_header->width + 1) / 2;
+        const uint8_t *source = pixels + y * PREVIEW_SHM_WIDTH;
+        for (int x = 0; x < preview_header->width; x += 2) {
+            uint8_t v0 = source[x] >> 4;
+            uint8_t v1 = source[x + 1] >> 4;
+            if ((source[x] & 0x0f) > (rand() & 0x0f) && v0 < 15) v0++;
+            if ((source[x + 1] & 0x0f) > (rand() & 0x0f) && v1 < 15) v1++;
+            dest[x / 2] = (uint8_t)((v0 << 4) | v1);
+        }
+    }
+}
+
 void update_time(struct window_t* w) {
     framebuffer_fill(w->fb, 0);    
     time_t now = time(NULL);
@@ -138,7 +277,6 @@ void update_temp_and_fan(struct window_t* w) {
         framebuffer_draw_icon(w->fb, 20, 138 + i * 24, (48-20)/2, FA_FAN);
     }
     font4_set_color(16);
-    framebuffer_draw_icon(w->fb, 20, 138, (48-20)/2, FA_FAN);
 }
 int read_process_output(const char* command, char* buffer, size_t buffer_size) {
     FILE* pipe = popen(command, "r");
@@ -295,6 +433,9 @@ struct window_t  windows[max_window] = {{
 }, {
     .update_func = update_transmission_status,
     .update_frequency_s = 5
+}, {
+    .update_func = update_preview,
+    .update_frequency_s = 0
 }};
 void windows_init() {
     for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
@@ -415,7 +556,7 @@ int main(int argc, char *argv[]) {
     if (shutdown_requested) display_shutdown_screen();
 
     }
-    
+    preview_shm_close_consumer();
     display_close();
     return 0;
 }
