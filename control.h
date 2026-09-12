@@ -72,9 +72,39 @@
 #define IR_TECHNICS_VOL_DOWN 0xFF7B7E
 #define IR_TECHNICS_INPUT_VDP 0xFFBABF
 #define IR_TECHNICS_INPUT_DAT 0xFFE600
+#define IR_THOMSON_1        0x300
+#define IR_THOMSON_2        0x308
+#define IR_THOMSON_3        0x310
+#define IR_THOMSON_4        0x301
+#define IR_THOMSON_5        0x309
+#define IR_THOMSON_6        0x311
+#define IR_THOMSON_7        0x302
+#define IR_THOMSON_8        0x30A
+#define IR_THOMSON_9        0x312
+#define IR_THOMSON_0        0x30E
+#define IR_THOMSON_AV       0x318
+#define IR_THOMSON_VOL_UP   0x329
+#define IR_THOMSON_VOL_DOWN 0x32A
+#define IR_THOMSON_MUTE     0x305
+#define IR_THOMSON_CH_UP    0x325
+#define IR_THOMSON_CH_DOWN  0x327
+#define IR_THOMSON_UP       0x30B
+#define IR_THOMSON_OK       0x30C
+#define IR_THOMSON_DOWN     0x30D
+#define IR_THOMSON_LEFT     0x336
+#define IR_THOMSON_RIGHT    0x337
+#define IR_THOMSON_EXIT     0x33E
+#define IR_THOMSON_MENU     0x331
+#define IR_THOMSON_RED      0x339
+#define IR_THOMSON_GREEN    0x33B
+#define IR_THOMSON_YELLOW   0x338
+#define IR_THOMSON_BLUE     0x315
+#define IR_THOMSON_TEXT     0x31E
+#define IR_THOMSON_POWER    0x31D
 
 void control_event_loop(int (*event_callback)(int ev_type, int value));
 void control_set_led(int led, int value);
 void ir_tx_send(uint64_t code);
+void ir_tx_send_tv(uint64_t code);
 int print_event(int ev_type, int value);
 #endif

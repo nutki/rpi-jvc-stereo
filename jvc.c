@@ -37,6 +37,7 @@ void send_mpv_keypress(char key) {
     close(fd);
 }
 static int direct_flag, sa_bass_flag, standby_flag;
+static int text_mode = 0, tv_on = 0;
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
@@ -46,12 +47,28 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
         if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
         if (value == JVC_KEY_BAND) ir_tx_send(IR_TECHNICS_POWER);
+        if (value == JVC_KEY_DISPLAY_MODE) ir_tx_send_tv(IR_THOMSON_AV);
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
-        if (value == JVC_REMOTE_KEY_CH_DOWN) send_mpv_keypress('s');
-        if (value == JVC_REMOTE_KEY_CH_UP) send_mpv_keypress('w');
-        if (value >= JVC_REMOTE_KEY_0 && value <= JVC_REMOTE_KEY_9) send_mpv_keypress('0' + value - JVC_REMOTE_KEY_0);
+        if (value == JVC_REMOTE_KEY_CH_DOWN) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_DOWN) : send_mpv_keypress('s');
+        if (value == JVC_REMOTE_KEY_CH_UP) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_UP) : send_mpv_keypress('w');
+        if (value >= JVC_REMOTE_KEY_0 && value <= JVC_REMOTE_KEY_9) {
+            if (text_mode) {
+                int code[10] = {IR_THOMSON_0, IR_THOMSON_1, IR_THOMSON_2, IR_THOMSON_3, IR_THOMSON_4, IR_THOMSON_5, IR_THOMSON_6, IR_THOMSON_7, IR_THOMSON_8, IR_THOMSON_9};
+                ir_tx_send_tv(code[value - JVC_REMOTE_KEY_0]);
+            } else send_mpv_keypress('0' + value - JVC_REMOTE_KEY_0);
+        }
+        if (value == JVC_REMOTE_KEY_RED && text_mode) ir_tx_send_tv(IR_THOMSON_RED);
+        if (value == JVC_REMOTE_KEY_GREEN && text_mode) ir_tx_send_tv(IR_THOMSON_GREEN);
+        if (value == JVC_REMOTE_KEY_YELLOW && text_mode) ir_tx_send_tv(IR_THOMSON_YELLOW);
+        if (value == JVC_REMOTE_KEY_BLUE && text_mode) ir_tx_send_tv(IR_THOMSON_BLUE);
+        if (value == JVC_REMOTE_KEY_OPTIONS && text_mode) ir_tx_send_tv(IR_THOMSON_MENU);
+        if (value == JVC_REMOTE_KEY_EXIT) {
+            ir_tx_send_tv(tv_on ? IR_THOMSON_POWER : IR_THOMSON_AV);
+            tv_on = !tv_on;
+            text_mode = 0;
+        }
         if (value == JVC_REMOTE_KEY_FF) send_mpv_keypress('.');
         if (value == JVC_REMOTE_KEY_REW) send_mpv_keypress(',');
         if (value == JVC_REMOTE_KEY_PLAY) send_mpv_keypress(' ');
@@ -62,6 +79,10 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_UP) send_mpv_keypress('d');
         if (value == JVC_REMOTE_KEY_DOWN) send_mpv_keypress('a');
         if (value == JVC_REMOTE_KEY_TVGUIDE) send_mpv_keypress('r');
+        if (value == JVC_REMOTE_KEY_TEXT) {
+            ir_tx_send_tv(text_mode ? IR_THOMSON_EXIT : IR_THOMSON_TEXT);
+            text_mode = !text_mode;
+        }
     }
     if (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT) {
         if (value == JVC_REMOTE_KEY_RIGHT) send_mpv_keypress('>');

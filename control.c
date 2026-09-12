@@ -55,6 +55,17 @@ static int ir_technics_encode(uint64_t code, uint32_t *buffer, size_t capacity) 
     buffer[IR_TECHNICS_COUNT - 1] = 497;
     return IR_TECHNICS_COUNT;
 }
+#define IR_THOMSON_COUNT 12*2 + 1
+static int ir_thomson_encode(uint64_t code, uint32_t *buffer, size_t capacity) {
+    if (capacity < IR_THOMSON_COUNT) return -1;
+    buffer[0] = 600 - 250;
+    for (size_t bit = 0; bit < 12; bit++) {
+        buffer[bit * 2 + 1] = (code & (1 << (11-bit))) ? 4525 + 250 : 1975 + 250;
+        buffer[bit * 2 + 2] = 600 - 250;
+    }
+    return IR_THOMSON_COUNT;
+}
+
 
 int ir_init(void) {
     ir_rx_fd = open("/dev/lirc1", O_RDONLY | O_NONBLOCK);
@@ -110,6 +121,24 @@ void ir_tx_send(uint64_t code) {
         perror("write");
         return;
     }
+}
+void ir_tx_send_tv(uint64_t code) {
+    uint32_t buffer[IR_THOMSON_COUNT];
+    static int toggle = 0;
+    unsigned int carrier = 33000;
+    if (ir_thomson_encode(code | toggle, buffer, IR_THOMSON_COUNT) < 0) {
+        fprintf(stderr, "Unable to build IR pulse buffer\n");
+        return;
+    }
+    if (ioctl(ir_tx_fd, LIRC_SET_SEND_CARRIER, &carrier) < 0) {
+        perror("LIRC_SET_SEND_CARRIER");
+        return;
+    }
+    if (write(ir_tx_fd, buffer, sizeof(buffer)) != (ssize_t)sizeof(buffer)) {
+        perror("write");
+        return;
+    }
+    toggle ^= 0x80;
 }
 
 void control_set_led(int led, int value) {
