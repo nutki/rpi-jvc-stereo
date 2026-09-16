@@ -17,6 +17,7 @@
 #include "player/preview_shm.h"
 #include "curl.h"
 #include "addr.h"
+#include "alsavolume.h"
 SH1122* oled;
 FrameBuffer* fb;
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -95,6 +96,7 @@ void send_mpv_keypress(char key) {
 }
 static int direct_flag, sa_bass_flag, standby_flag;
 static int text_mode = 0;
+static int headphones_volume = 10, headphones_on = 0;
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
@@ -148,11 +150,20 @@ static int control_event_callback(int ev_type, int value) {
     }
     if (ev_type == EVENT_ENCODER_PLUS || ev_type == EVENT_ENCODER_MINUS) {
         int down = ev_type == EVENT_ENCODER_MINUS;
-        if (get_stereo_power_state() == POWER_ON) {
+        if (headphones_on) {
+            headphones_volume += down ? -1 : 1;
+            if (headphones_volume < 0) headphones_volume = 0;
+            if (headphones_volume > 100) headphones_volume = 100;
+            alsa_volume_set(headphones_volume);
+        } else if (get_stereo_power_state() == POWER_ON) {
             ir_tx_send(down ? IR_TECHNICS_VOL_DOWN : IR_TECHNICS_VOL_UP);
         } else if(get_tv_power_state() == POWER_ON) {
             ir_tx_send_tv(down ? IR_THOMSON_VOL_DOWN : IR_THOMSON_VOL_UP);
         }
+    }
+    if (ev_type == EVENT_JACK_DETECT) {
+        headphones_on = 1;
+        alsa_volume_set(value ? headphones_volume : 100);
     }
     return shutdown_requested;
 }

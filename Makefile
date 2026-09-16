@@ -1,13 +1,13 @@
 # Makefile for JVC project
 
 CC = gcc
-CFLAGS = -Wall -O2 $(shell pkg-config --cflags libnl-3.0 libcurl freetype2 json-c)
-LDLIBS = -lgpiod -lpng -lpthread -lm $(shell pkg-config --libs libnl-3.0 libnl-genl-3.0 libcurl freetype2 json-c)
+CFLAGS = -Wall -O2 $(shell pkg-config --cflags libnl-3.0 libcurl freetype2 json-c alsa)
+LDLIBS = -lgpiod -lpng -lpthread -lm $(shell pkg-config --libs libnl-3.0 libnl-genl-3.0 libcurl freetype2 json-c alsa)
 
 # Targets
 all: jvc control
 
-jvc: jvc.o display.o font4.o wlan_check.o control.o curl.o
+jvc: jvc.o display.o font4.o wlan_check.o control.o curl.o alsavolume.o
 
 control: control.o
 
