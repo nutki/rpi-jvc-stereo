@@ -15,6 +15,8 @@
 #include "wlan_check.h"
 #include "control.h"
 #include "player/preview_shm.h"
+#include "curl.h"
+#include "addr.h"
 SH1122* oled;
 FrameBuffer* fb;
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -22,6 +24,47 @@ void display_show(void);
 
 static int current_window_idx = 6;
 #define max_window 7
+
+int64_t get_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
+
+static double vp[5] = { -1, -1, -1, -1, -1 };
+#define POWER_SOCKET_TV 2
+#define POWER_SOCKET_STEREO 1
+#define POWER_OFF 0
+#define POWER_STANDBY 1
+#define POWER_ON 2
+static int get_tv_power_state() {
+    double usage = vp[POWER_SOCKET_TV];
+    return usage > 5 ? POWER_ON : usage > 0 ? POWER_STANDBY : POWER_OFF;
+}
+static int get_stereo_power_state() {
+    double usage = vp[POWER_SOCKET_STEREO];
+    return usage > 10 ? POWER_ON : usage > 0 ? POWER_STANDBY : POWER_OFF;
+}
+static void *power_monitor_thread_main(void *arg) {
+    (void)arg;
+    while (!shutdown_requested) {
+        json_object *root = http_get_json("http://" SHELLY_0 "/meter/0");
+        if (root) {
+            vp[4] = json_object_get_double(json_object_object_get(root, "power"));
+            json_object_put(root);
+        }
+        root = http_get_json("http://" SHELLY_STRIP "/rpc/Shelly.GetStatus");
+        if (root) {
+            char *names[] = { "switch:0", "switch:1", "switch:2", "switch:3" };
+            for (int i = 0; i < 4; i++) {
+                vp[i] = json_object_get_double(json_object_object_get(json_object_object_get(root, names[i]), "apower"));
+            }
+            json_object_put(root);
+        }
+        usleep(1000 * 1000);
+    }
+    return NULL;
+}
 
 void send_mpv_keypress(char key) {
     char msg[2] = { 'K', key };
@@ -37,7 +80,7 @@ void send_mpv_keypress(char key) {
     close(fd);
 }
 static int direct_flag, sa_bass_flag, standby_flag;
-static int text_mode = 0, tv_on = 0;
+static int text_mode = 0;
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
@@ -65,8 +108,7 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_BLUE && text_mode) ir_tx_send_tv(IR_THOMSON_BLUE);
         if (value == JVC_REMOTE_KEY_OPTIONS && text_mode) ir_tx_send_tv(IR_THOMSON_MENU);
         if (value == JVC_REMOTE_KEY_EXIT) {
-            ir_tx_send_tv(tv_on ? IR_THOMSON_POWER : IR_THOMSON_AV);
-            tv_on = !tv_on;
+            ir_tx_send_tv(get_tv_power_state() == POWER_ON ? IR_THOMSON_POWER : IR_THOMSON_AV);
             text_mode = 0;
         }
         if (value == JVC_REMOTE_KEY_FF) send_mpv_keypress('.');
@@ -90,12 +132,14 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_VOL_UP) ir_tx_send(IR_TECHNICS_VOL_UP);
         if (value == JVC_REMOTE_KEY_VOL_DOWN) ir_tx_send(IR_TECHNICS_VOL_DOWN);
     }
-    if (ev_type == EVENT_ENCODER_PLUS) {
-        ir_tx_send(IR_TECHNICS_INPUT_VDP);
-        usleep(10000);
-        ir_tx_send(IR_TECHNICS_VOL_UP);
+    if (ev_type == EVENT_ENCODER_PLUS || ev_type == EVENT_ENCODER_MINUS) {
+        int down = ev_type == EVENT_ENCODER_MINUS;
+        if (get_stereo_power_state() == POWER_ON) {
+            ir_tx_send(down ? IR_TECHNICS_VOL_DOWN : IR_TECHNICS_VOL_UP);
+        } else if(get_tv_power_state() == POWER_ON) {
+            ir_tx_send_tv(down ? IR_THOMSON_VOL_DOWN : IR_THOMSON_VOL_UP);
+        }
     }
-    if (ev_type == EVENT_ENCODER_MINUS) ir_tx_send(IR_TECHNICS_VOL_DOWN);
     return shutdown_requested;
 }
 
@@ -409,16 +453,12 @@ void update_transmission_status(struct window_t* w) {
 }
 void update_power_usage_monitor(struct window_t* w) {
     framebuffer_fill(w->fb, 0);
-    char power_buf[32];
-    char *(commands[5]) = {
-#include "power_commands.h"
-    };
     framebuffer_fill(w->fb, 0);
     framebuffer_draw_icon(w->fb, 16, 0, (48-16)/2, FA_PLUG);
     for (int i = 0; i < 5; i++) {
-        if (!read_process_output(commands[i], power_buf, sizeof(power_buf))) {
-            float usage = strtof(power_buf, 0);
-            framebuffer_draw_text_fmt(w->fb, 12, i * 50 + 20, (48+12)/2, usage < 10 ? "%.1fW" : "%.0fW", usage);
+        double usage = vp[i];
+        if (vp >= 0) {
+            framebuffer_draw_text_fmt(w->fb, 12, i * 50 + 20, (48+12)/2, usage < 10 ? "%.1lfW" : "%.0lfW", usage);
         } else {
             framebuffer_draw_text(w->fb, 12, i * 50 + 20, (48+12)/2, "N/A");
         }
@@ -444,7 +484,7 @@ struct window_t  windows[max_window] = {{
     .update_frequency_s = 1
 }, {
     .update_func = update_power_usage_monitor,
-    .update_frequency_s = 2
+    .update_frequency_s = 1
 }, {
     .update_func = update_wifi_status,
     .update_frequency_s = 1
@@ -473,7 +513,7 @@ void update_window(struct window_t* w) {
     }
 }
 int main(int argc, char *argv[]) {
-    pthread_t control_thread;
+    pthread_t control_thread, power_monitor_thread;
     signal(SIGTERM, handle_shutdown_signal);
     signal(SIGINT, handle_shutdown_signal);
     display_init();
@@ -484,20 +524,12 @@ int main(int argc, char *argv[]) {
         display_close();
         return 1;
     }
+    if (pthread_create(&power_monitor_thread, NULL, power_monitor_thread_main, NULL) != 0) {
+        fprintf(stderr, "Failed to start power monitor thread\n");
+        display_close();
+        return 1;
+    }
 
-    if (argc > 1) {
-        const char* filename = argv[1];
-        printf("Watching PNG file: %s (reloading at 50fps)\n", filename);
-        while (!shutdown_requested) {
-            FrameBuffer *img_fb = framebuffer_create_from_png(filename);
-            if (img_fb) {
-                framebuffer_blit(fb, img_fb, (256 - img_fb->width) / 2, (48 - img_fb->height) / 2);
-                display_show();
-                framebuffer_destroy(img_fb);
-            }
-            usleep(20000);  // 50 fps (20ms per frame)
-        }
-    } else {
     // Create test image buffer (32x40 pixels)
     uint8_t image_data[32 * 20] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -576,7 +608,6 @@ int main(int argc, char *argv[]) {
     // display_show();
     if (shutdown_requested) display_shutdown_screen();
 
-    }
     preview_shm_close_consumer();
     display_close();
     return 0;
