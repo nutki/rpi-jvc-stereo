@@ -30,6 +30,20 @@ int64_t get_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
 }
+int read_file_content(const char* path, char* buffer, size_t buffer_size) {
+    FILE* file = fopen(path, "r");
+    if (!file) return -1;
+    if (!fread(buffer, 1, buffer_size, file)) {
+        fclose(file);
+        return -1;
+    }
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') {
+        buffer[len - 1] = '\0';
+    }
+    fclose(file);
+    return 0;
+}
 
 static double vp[5] = { -1, -1, -1, -1, -1 };
 #define POWER_SOCKET_TV 2
@@ -234,12 +248,11 @@ void update_preview(struct window_t* w) {
     uint8_t pixels[PREVIEW_SHM_BYTES];
     uint32_t first_sequence;
     uint32_t last_sequence;
-    static char metadata[768];
-    static char *artist, *song_name, *year;
+    static char artist[128], song_name[128], year[5];
 
-    framebuffer_fill(w->fb, 0);
     if (preview_shm_open_consumer() != 0) return;
     int position, duration;
+    static int prev_position = -1, prev_direct_flag = -1, prev_width = -1;
     static char name[NAME_MAX+1];
     int new_name = 0;
 
@@ -262,26 +275,34 @@ void update_preview(struct window_t* w) {
         }
         last_sequence = __atomic_load_n(&preview_header->sequence, __ATOMIC_ACQUIRE);
     } while (first_sequence != last_sequence || (last_sequence & 1));
-    if (duration)
-        framebuffer_draw_text_fmt(w->fb, 10, 194 - direct_flag * preview_header->width, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
     if (new_name) {
-        char command[PATH_MAX + 64];
-        snprintf(command, sizeof(command), "jq --raw-output0 '.artist,.name,.year' \"/media/HDD/music videos/%s.meta.json\"", name);
-        FILE *pipe = popen(command, "r");
-        if (pipe) {
-            size_t bytes_read = fread(metadata, 1, sizeof(metadata) - 1, pipe);
-            metadata[bytes_read] = '\0';
-            pclose(pipe);
-            artist = metadata;
-            song_name = artist + strlen(artist) + 1;
-            year = song_name + strlen(song_name) + 1;
+        char filename[PATH_MAX];
+        static char data[1024 * 1024];
+        snprintf(filename, sizeof(filename), "/media/HDD/music videos/%s.meta.json", name);
+        if (!read_file_content(filename, data, sizeof data)) {
+            struct json_object *root = json_tokener_parse(data);
+            const char *pyear = json_object_get_string(json_object_object_get(root, "year"));
+            if (pyear) strlcpy(year, pyear, sizeof year);
+            const char *pname = json_object_get_string(json_object_object_get(root, "name"));
+            if (pname) strlcpy(song_name, pname, sizeof song_name);
+            const char *partist = json_object_get_string(json_object_object_get(root, "artist"));
+            if (partist) strlcpy(artist, partist, sizeof artist);
+            json_object_put(root);
         }
     }
-    font4_set_color(8);
-    framebuffer_draw_text(w->fb, 12, 0, 22, artist);
-    font4_set_color(15);
-    framebuffer_draw_text(w->fb, 14, 0, 38, song_name);
-    framebuffer_draw_text(w->fb, 10, 228 - direct_flag * preview_header->width, 47, year);
+    if (new_name || position != prev_position || preview_header->width != prev_width || direct_flag != prev_direct_flag) {
+        framebuffer_fill(w->fb, 0);
+        if (duration)
+            framebuffer_draw_text_fmt(w->fb, 10, 194 - direct_flag * preview_header->width, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
+        font4_set_color(8);
+        framebuffer_draw_text(w->fb, 12, 0, 22, artist);
+        font4_set_color(15);
+        framebuffer_draw_text(w->fb, 14, 0, 38, song_name);
+        framebuffer_draw_text(w->fb, 10, 228 - direct_flag * preview_header->width, 47, year);
+        prev_position = position;
+        prev_width = preview_header->width;
+        prev_direct_flag = direct_flag;
+    }
 
     if (direct_flag) for (int y = 0; y < preview_header->height; y++) {
         uint8_t *dest = w->fb->buffer + y * 128 + 128 - (preview_header->width + 1) / 2;
@@ -310,20 +331,6 @@ void update_time(struct window_t* w) {
     char time_str[9];
     strftime(time_str, sizeof(time_str), "%H:%M", tm_info);
     framebuffer_draw_text(w->fb, 16, tm_info->tm_min * 3 + 16, 24+8, time_str);
-}
-int read_file_content(const char* path, char* buffer, size_t buffer_size) {
-    FILE* file = fopen(path, "r");
-    if (!file) return -1;
-    if (!fgets(buffer, buffer_size, file)) {
-        fclose(file);
-        return -1;
-    }    
-    size_t len = strlen(buffer);
-    if (len > 0 && buffer[len - 1] == '\n') {
-        buffer[len - 1] = '\0';
-    }
-    fclose(file);
-    return 0;
 }
 void update_temp_and_fan(struct window_t* w) {
     char temp_buf[32];
@@ -532,10 +539,14 @@ int main(int argc, char *argv[]) {
 
     for (int step = 0; !shutdown_requested; step++) {
         struct window_t* current_window = &windows[current_window_idx];
+        int64_t t0 = get_us();
         update_window(current_window);
         framebuffer_blit(fb, current_window->fb, 0, 0);
+        // int64_t rt = get_us() - t0;
+        // printf("%d\n", rt);
         display_show();
-        usleep(1000);
+        int64_t t1 = get_us(), e1 = t1 - t0;
+        if (e1 < 20000) usleep(20000 - e1);
     }
     
     if (shutdown_requested) display_shutdown_screen();
