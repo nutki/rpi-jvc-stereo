@@ -94,22 +94,32 @@ void send_mpv_keypress(char key) {
     write(fd, msg, 2);
     close(fd);
 }
-static int direct_flag, sa_bass_flag, standby_flag;
+static int direct_flag, sa_bass_flag, standby_flag = 1;
 static int text_mode = 0;
 static int headphones_volume = 10, headphones_on = 0;
+static void power_pressed() {
+    control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
+    if (standby_flag) {
+        send_mpv_keypress('q');
+        current_window_idx = 0;
+    } else {
+        system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
+        current_window_idx = 6;
+    }
+}
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
         if (value == JVC_KEY_DIRECT) control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
         if (value == JVC_KEY_S_A_BASS) control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
-        if (value == JVC_KEY_STANDBY) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
+        if (value == JVC_KEY_STANDBY) power_pressed();
         if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
         if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
         if (value == JVC_KEY_BAND) ir_tx_send(IR_TECHNICS_POWER);
         if (value == JVC_KEY_DISPLAY_MODE) ir_tx_send_tv(IR_THOMSON_AV);
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
-        if (value == JVC_REMOTE_KEY_POWER) control_set_led(JVC_LED_STANDBY, standby_flag = !standby_flag);
+        if (value == JVC_REMOTE_KEY_POWER) power_pressed();
         if (value == JVC_REMOTE_KEY_CH_DOWN) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_DOWN) : send_mpv_keypress('s');
         if (value == JVC_REMOTE_KEY_CH_UP) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_UP) : send_mpv_keypress('w');
         if (value >= JVC_REMOTE_KEY_0 && value <= JVC_REMOTE_KEY_9) {
@@ -162,11 +172,12 @@ static int control_event_callback(int ev_type, int value) {
         }
     }
     if (ev_type == EVENT_JACK_DETECT) {
-        headphones_on = 1;
+        headphones_on = value;
         alsa_volume_set(value ? headphones_volume : 100);
     }
     return shutdown_requested;
 }
+
 
 static void *control_thread_main(void *arg) {
     (void)arg;
