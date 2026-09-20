@@ -44,6 +44,8 @@ void framebuffer_draw_icon(FrameBuffer* fb, int size, int x, int y, const char* 
 #define FA_PLUG "\uf1e6"
 #define FA_FILM "\uf008"
 #define FA_DOWNLOAD "\uf019"
+#define FA_TV "\uf26c"
+#define FA_RADIO "\uf8d7"
 
 // SH1122 OLED display structure and functions
 typedef struct {

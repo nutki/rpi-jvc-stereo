@@ -46,6 +46,32 @@ int read_file_content(const char* path, char* buffer, size_t buffer_size) {
     return 0;
 }
 
+static FrameBuffer *popup_overlay;
+static int popup_overlay_ticks = 0;
+static char *popup_overlay_icon = "";
+static int popup_overlay_progress = -1, popup_overlay_needs_update = 0;
+static void draw_overlay(char *icon, int progress) {
+    popup_overlay_ticks = 75;
+    if (strcmp(icon, popup_overlay_icon) || popup_overlay_progress != progress) {
+        popup_overlay_icon = icon;
+        popup_overlay_progress = progress;
+        popup_overlay_needs_update = 1;
+    }
+}
+static void update_overlay() {
+    if (!popup_overlay_needs_update) return;
+    char *icon = popup_overlay_icon;
+    int progress = popup_overlay_progress;
+    framebuffer_fill(popup_overlay, 0);
+    framebuffer_rect(popup_overlay, 1, 1, popup_overlay->width - 2, popup_overlay->height - 2, 15);
+    framebuffer_draw_icon(popup_overlay, popup_overlay->height - 12, 8, 4, icon);
+    if (progress >= 0) {
+        framebuffer_fill_rect(popup_overlay, 40, 8, (popup_overlay->width - 50) * progress / 100, popup_overlay->height - 16, 5);
+        framebuffer_rect(popup_overlay, 40, 8, (popup_overlay->width - 50), popup_overlay->height - 16, 15);
+    }
+    popup_overlay_needs_update = 0;
+}
+
 static double vp[5] = { -1, -1, -1, -1, -1 };
 #define POWER_SOCKET_TV 2
 #define POWER_SOCKET_STEREO 1
@@ -176,7 +202,10 @@ static void sa_bass_pressed() {
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
-        if (value == JVC_KEY_DIRECT) control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
+        if (value == JVC_KEY_DIRECT) {
+            control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
+            if (!direct_flag && !standby_flag) tv_state_req = POWER_REQUEST_ON;
+        }
         if (value == JVC_KEY_S_A_BASS) sa_bass_pressed();
         if (value == JVC_KEY_STANDBY) power_pressed();
         if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
@@ -200,7 +229,7 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_BLUE && text_mode) ir_tx_send_tv(IR_THOMSON_BLUE);
         if (value == JVC_REMOTE_KEY_OPTIONS && text_mode) ir_tx_send_tv(IR_THOMSON_MENU);
         if (value == JVC_REMOTE_KEY_EXIT) {
-            ir_tx_send_tv(get_tv_power_state() == POWER_ON ? IR_THOMSON_POWER : IR_THOMSON_AV);
+            if (tv_state_req == POWER_REQUEST_NONE) tv_state_req = get_tv_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
             text_mode = 0;
         }
         if (value == JVC_REMOTE_KEY_FF) send_mpv_keypress('.');
@@ -231,15 +260,21 @@ static int control_event_callback(int ev_type, int value) {
             if (headphones_volume < 0) headphones_volume = 0;
             if (headphones_volume > 100) headphones_volume = 100;
             alsa_volume_set(headphones_volume);
+            draw_overlay(FA_VOLUME_UP, headphones_volume);
         } else if (get_stereo_power_state() == POWER_ON) {
             ir_tx_send(down ? IR_TECHNICS_VOL_DOWN : IR_TECHNICS_VOL_UP);
+            draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
         } else if(get_tv_power_state() == POWER_ON) {
             ir_tx_send_tv(down ? IR_THOMSON_VOL_DOWN : IR_THOMSON_VOL_UP);
+            draw_overlay(FA_TV FA_VOLUME_UP, -1);
         }
     }
     if (ev_type == EVENT_JACK_DETECT) {
         headphones_on = value;
         alsa_volume_set(value ? headphones_volume : 100);
+        if (value) draw_overlay(FA_VOLUME_UP, headphones_volume);
+        else if (get_stereo_power_state() == POWER_ON) draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
+        else if(get_tv_power_state() == POWER_ON) draw_overlay(FA_TV FA_VOLUME_UP, -1);
     }
     return shutdown_requested;
 }
@@ -618,6 +653,7 @@ struct window_t  windows[max_window] = {{
     .update_frequency_s = 0
 }};
 void windows_init() {
+    popup_overlay = framebuffer_create(240, 32);
     for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
         windows[i].fb = framebuffer_create(256, 48);
         windows[i].last_update_time = 0;
@@ -654,6 +690,11 @@ int main(int argc, char *argv[]) {
         int64_t t0 = get_us();
         update_window(current_window);
         framebuffer_blit(fb, current_window->fb, 0, 0);
+        if (popup_overlay_ticks > 0) {
+            update_overlay();
+            framebuffer_blit(fb, popup_overlay, (fb->width - popup_overlay->width)/2, (fb->height - popup_overlay->height)/2);
+            popup_overlay_ticks--;
+        }
         // int64_t rt = get_us() - t0;
         // printf("%d\n", rt);
         display_show();
