@@ -113,6 +113,7 @@ static void update_power_states(void) {
             tv_state_req = POWER_REQUEST_NONE;
         } else if (tv_state == POWER_STANDBY) {
             ir_tx_send_tv(IR_THOMSON_AV);
+            printf("TV ON!\n");
         } else {
             set_socket_power_state(POWER_SOCKET_TV, 1);
         }
@@ -120,7 +121,10 @@ static void update_power_states(void) {
         if (tv_state != POWER_ON) {
             tv_state_req = POWER_REQUEST_NONE;
         } else {
-            if (tv_state_req_ticks > 30) ir_tx_send_tv(IR_THOMSON_POWER);
+            if (tv_state_req_ticks > 30) {
+                ir_tx_send_tv(IR_THOMSON_POWER);
+                printf("TV OFF!\n");
+            }
         }
     }
     if (stereo_state_req == POWER_REQUEST_ON) {
@@ -260,7 +264,7 @@ static int control_event_callback(int ev_type, int value) {
             if (headphones_volume < 0) headphones_volume = 0;
             if (headphones_volume > 100) headphones_volume = 100;
             alsa_volume_set(headphones_volume);
-            draw_overlay(FA_VOLUME_UP, headphones_volume);
+            draw_overlay(FA_HEAPHONES, headphones_volume);
         } else if (get_stereo_power_state() == POWER_ON) {
             ir_tx_send(down ? IR_TECHNICS_VOL_DOWN : IR_TECHNICS_VOL_UP);
             draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
@@ -272,7 +276,7 @@ static int control_event_callback(int ev_type, int value) {
     if (ev_type == EVENT_JACK_DETECT) {
         headphones_on = value;
         alsa_volume_set(value ? headphones_volume : 100);
-        if (value) draw_overlay(FA_VOLUME_UP, headphones_volume);
+        if (value) draw_overlay(FA_HEAPHONES, headphones_volume);
         else if (get_stereo_power_state() == POWER_ON) draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
         else if(get_tv_power_state() == POWER_ON) draw_overlay(FA_TV FA_VOLUME_UP, -1);
     }
