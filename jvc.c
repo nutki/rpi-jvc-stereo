@@ -24,7 +24,7 @@ static volatile sig_atomic_t shutdown_requested = 0;
 void display_show(void);
 
 static int current_window_idx = 0;
-#define max_window 7
+#define max_window 8
 
 int64_t get_us(void) {
     struct timespec ts;
@@ -338,6 +338,27 @@ void update_preview(struct window_t* w) {
         }
     }
 }
+#define CDPREVIEW_W 86
+void update_cdplayer(struct window_t* w) {
+    static uint8_t pixels_all[CDPREVIEW_W*48*180];
+    static int inited = 0, frame = 0;
+    if (!inited) {
+        read_file_content("cdplayer/out86b.dat", (int8_t *)pixels_all, sizeof pixels_all);
+        inited = 1;
+    }
+    uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(frame++%180);
+    for (int y = 0; y < 48; y++) {
+        uint8_t *dest = w->fb->buffer + y * 128 + 128 - (CDPREVIEW_W + 1) / 2;
+        const uint8_t *source = pixels + y * CDPREVIEW_W;
+        for (int x = 0; x < CDPREVIEW_W; x += 2) {
+            uint8_t v0 = source[x] >> 4;
+            uint8_t v1 = source[x + 1] >> 4;
+            if ((source[x] & 0x0f) > (rand() & 0x0f) && v0 < 15) v0++;
+            if ((source[x + 1] & 0x0f) > (rand() & 0x0f) && v1 < 15) v1++;
+            dest[x / 2] = (uint8_t)((v0 << 4) | v1);
+        }
+    }
+}
 
 void update_time(struct window_t* w) {
     framebuffer_fill(w->fb, 0);    
@@ -525,6 +546,9 @@ struct window_t  windows[max_window] = {{
     .update_frequency_s = 5
 }, {
     .update_func = update_preview,
+    .update_frequency_s = 0
+}, {
+    .update_func = update_cdplayer,
     .update_frequency_s = 0
 }};
 void windows_init() {
