@@ -12,7 +12,6 @@ static double percent_to_db(int percent) {
     double min = pow(10.0, (db_min - db_max) / 6000.0);
     double v = min + p * (1.0 - min);
     double res = db_max + 6000.0 * log10(v); 
-    printf("%d => %lf\n", percent, res);
     return res;
 }
 
