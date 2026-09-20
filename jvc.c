@@ -60,6 +60,65 @@ static int get_stereo_power_state() {
     double usage = vp[POWER_SOCKET_STEREO];
     return usage > 10 ? POWER_ON : usage > 0 ? POWER_STANDBY : POWER_OFF;
 }
+#define POWER_REQUEST_NONE 0
+#define POWER_REQUEST_ON 1
+#define POWER_REQUEST_OFF 2
+
+static int tv_state_req = POWER_REQUEST_NONE;
+static int stereo_state_req = POWER_REQUEST_NONE;
+static void set_socket_power_state(int idx, int on) {
+    char req[200], resp[200];
+    snprintf(req, sizeof req, "http://" SHELLY_STRIP "/rpc/Switch.Set?id=%d&on=%s", idx, on ? "true" : "false");
+    http_get(req, resp, sizeof resp);
+}
+static void update_power_states(void) {
+    static int prev_tv_state = -1, prev_stereo_state = -1;
+    static int tv_state_ticks = 0, stereo_state_ticks = 0;
+    static int prev_tv_state_req = -1, prev_stereo_state_req = -1;
+    static int tv_state_req_ticks = 0, stereo_state_req_ticks = 0;
+    int tv_state = get_tv_power_state();
+    int stereo_state = get_stereo_power_state();
+    if (tv_state != prev_tv_state) tv_state_ticks = 0; else tv_state_ticks++;
+    if (stereo_state != prev_stereo_state) stereo_state_ticks = 0; else stereo_state_ticks++;
+    if (tv_state_req != prev_tv_state_req) tv_state_req_ticks = 0; else tv_state_req_ticks++;
+    if (stereo_state_req != prev_stereo_state_req) stereo_state_req_ticks = 0; else stereo_state_req_ticks++;
+    if (tv_state_req == POWER_REQUEST_ON) {
+        if (tv_state == POWER_ON) {
+            tv_state_req = POWER_REQUEST_NONE;
+        } else if (tv_state == POWER_STANDBY) {
+            ir_tx_send_tv(IR_THOMSON_AV);
+        } else {
+            set_socket_power_state(POWER_SOCKET_TV, 1);
+        }
+    } else if (tv_state_req == POWER_REQUEST_OFF) {
+        if (tv_state != POWER_ON) {
+            tv_state_req = POWER_REQUEST_NONE;
+        } else {
+            if (tv_state_req_ticks > 30) ir_tx_send_tv(IR_THOMSON_POWER);
+        }
+    }
+    if (stereo_state_req == POWER_REQUEST_ON) {
+        if (stereo_state == POWER_ON) {
+            stereo_state_req = POWER_REQUEST_NONE;
+        } else if (stereo_state == POWER_STANDBY) {
+            ir_tx_send(IR_TECHNICS_POWER);
+        } else {
+            set_socket_power_state(POWER_SOCKET_STEREO, 1);
+        }
+    } else if (stereo_state_req == POWER_REQUEST_OFF) {
+        if (stereo_state != POWER_ON) {
+            stereo_state_req = POWER_REQUEST_NONE;
+        } else {
+            ir_tx_send(IR_TECHNICS_POWER);
+        }
+    }
+    if (tv_state == POWER_STANDBY && tv_state_ticks > 30) set_socket_power_state(POWER_SOCKET_TV, 0);
+    if (stereo_state == POWER_STANDBY && stereo_state_ticks > 5) set_socket_power_state(POWER_SOCKET_STEREO, 0);
+    prev_stereo_state = stereo_state;
+    prev_tv_state = tv_state;
+    prev_stereo_state_req = stereo_state_req;
+    prev_tv_state_req = tv_state_req;
+}
 static void *power_monitor_thread_main(void *arg) {
     (void)arg;
     while (!shutdown_requested) {
@@ -76,6 +135,7 @@ static void *power_monitor_thread_main(void *arg) {
             }
             json_object_put(root);
         }
+        update_power_states();
         usleep(1000 * 1000);
     }
     return NULL;
@@ -102,16 +162,22 @@ static void power_pressed() {
     if (standby_flag) {
         send_mpv_keypress('q');
         current_window_idx = 0;
+        tv_state_req = POWER_REQUEST_OFF;
     } else {
         system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
         current_window_idx = 6;
+        if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
     }
+}
+static void sa_bass_pressed() {
+    control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
+    stereo_state_req = sa_bass_flag ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
 }
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
         if (value == JVC_KEY_DIRECT) control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
-        if (value == JVC_KEY_S_A_BASS) control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
+        if (value == JVC_KEY_S_A_BASS) sa_bass_pressed();
         if (value == JVC_KEY_STANDBY) power_pressed();
         if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
         if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
@@ -343,7 +409,7 @@ void update_cdplayer(struct window_t* w) {
     static uint8_t pixels_all[CDPREVIEW_W*48*180];
     static int inited = 0, frame = 0;
     if (!inited) {
-        read_file_content("cdplayer/out86b.dat", (int8_t *)pixels_all, sizeof pixels_all);
+        read_file_content("cdplayer/out86b.dat", (char *)pixels_all, sizeof pixels_all);
         inited = 1;
     }
     uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(frame++%180);
