@@ -19,7 +19,7 @@ static double percent_to_db(int percent) {
 int alsa_volume_init(void) {
     snd_mixer_selem_id_t *sid;
     if (snd_mixer_open(&mixer, 0) < 0) return -1;
-    if (snd_mixer_attach(mixer, "hw:2") < 0) goto error;
+    if (snd_mixer_attach(mixer, "hw:CARD=CODEC") < 0) goto error;
     if (snd_mixer_selem_register(mixer, NULL, NULL) < 0) goto error;
     if (snd_mixer_load(mixer) < 0) goto error;
     snd_mixer_selem_id_alloca(&sid);

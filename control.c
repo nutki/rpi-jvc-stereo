@@ -66,13 +66,28 @@ static int ir_thomson_encode(uint64_t code, uint32_t *buffer, size_t capacity) {
     return IR_THOMSON_COUNT;
 }
 
+static int find_lirc_node(const char *device, char *path) {
+    for (int i = 0; i < 4; i++) {
+        snprintf(path, 256, "/sys/devices/platform/%s/rc/rc%d/lirc%d", device, i/2, i%2);
+        if (access(path, F_OK) == 0) {
+            snprintf(path, 256, "/dev/lirc%d", i%2);
+            return 0;
+        }
+    }
+    return 1;
+}
 
 int ir_init(void) {
-    ir_rx_fd = open("/dev/lirc1", O_RDONLY | O_NONBLOCK);
+    char lirc_path[256];
+    if (find_lirc_node("ir-receiver@11", lirc_path)) return 1;
+    printf("Lirc RX: %s\n", lirc_path);
+    ir_rx_fd = open(lirc_path, O_RDONLY | O_NONBLOCK);
     if (ir_rx_fd < 0) return 1;
     unsigned int protos = LIRC_MODE_SCANCODE;
     if (ioctl(ir_rx_fd, LIRC_SET_REC_MODE, &protos)) return 1;
-    ir_tx_fd = open("/dev/lirc0", O_WRONLY);
+    if (find_lirc_node("pwm-ir-transmitter", lirc_path)) return 1;
+    printf("Lirc TX: %s\n", lirc_path);
+    ir_tx_fd = open(lirc_path, O_WRONLY);
     if (ir_tx_fd < 0) {
         perror("open");
         return 1;
@@ -186,6 +201,7 @@ int control_init(void) {
     }
 
     if (ir_init()) {
+        perror("IR init");
         return 1;
     }
     return 0;
@@ -210,6 +226,7 @@ static const char *key_labels[12] = {
 void control_event_loop(int (*event_callback)(int ev_type, int value)) {
     int stop = 0;
     if (control_init()) {
+        printf("Control init failed\n");
         return;
     }
     for (int scan_counter = 0; !stop; scan_counter++) {
