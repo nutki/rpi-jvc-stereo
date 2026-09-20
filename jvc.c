@@ -254,11 +254,13 @@ static int control_event_callback(int ev_type, int value) {
     if (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT) {
         if (value == JVC_REMOTE_KEY_RIGHT) send_mpv_keypress('>');
         if (value == JVC_REMOTE_KEY_LEFT) send_mpv_keypress('<');
-        if (value == JVC_REMOTE_KEY_VOL_UP) ir_tx_send(IR_TECHNICS_VOL_UP);
-        if (value == JVC_REMOTE_KEY_VOL_DOWN) ir_tx_send(IR_TECHNICS_VOL_DOWN);
     }
-    if (ev_type == EVENT_ENCODER_PLUS || ev_type == EVENT_ENCODER_MINUS) {
-        int down = ev_type == EVENT_ENCODER_MINUS;
+    if (ev_type == EVENT_ENCODER_PLUS || ev_type == EVENT_ENCODER_MINUS ||
+       ((ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT) &&
+       (value == JVC_REMOTE_KEY_VOL_UP || value == JVC_REMOTE_KEY_VOL_DOWN))) {
+        int down = ev_type == EVENT_ENCODER_MINUS ||
+            ((ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)
+            && value == JVC_REMOTE_KEY_VOL_DOWN);
         if (headphones_on) {
             headphones_volume += down ? -1 : 1;
             if (headphones_volume < 0) headphones_volume = 0;
