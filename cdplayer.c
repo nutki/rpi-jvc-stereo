@@ -24,8 +24,6 @@ static char **cdplayer_tracks = NULL;
 static size_t cdplayer_track_count = 0;
 static size_t cdplayer_current_track = 0;
 static int cdplayer_repeat = CDPLAYER_REPEAT_OFF;
-static int cdplayer_playing = 0;
-static int cdplayer_position_s = 0;
 
 static libvlc_instance_t *cdplayer_vlc_instance = NULL;
 static libvlc_media_player_t *cdplayer_vlc_player = NULL;
@@ -88,10 +86,8 @@ static void *cdplayer_worker_loop(void *arg) {
         cdplayer_event_pending = 0;
         pthread_mutex_unlock(&cdplayer_event_lock);
 
-        if (cdplayer_worker_exit && !pending) break;
-        if (pending) {
-            cdplayer_handle_media_ended();
-        }
+        if (cdplayer_worker_exit) break;
+        if (pending) cdplayer_handle_media_ended();
     }
     return NULL;
 }
@@ -139,7 +135,7 @@ static void cdplayer_free_tracks(void) {
     cdplayer_current_track = 0;
 }
 
-static void cdplayer_ensure_vlc(void) {
+static libvlc_media_player_t *cdplayer_ensure_vlc(void) {
     if (!cdplayer_vlc_instance) {
         static const char *vlc_args[] = {
             "--aout=alsa",  "--alsa-audio-device=hw:CARD=CODEC",
@@ -151,7 +147,7 @@ static void cdplayer_ensure_vlc(void) {
         };
         cdplayer_vlc_instance = libvlc_new(sizeof(vlc_args) / sizeof(vlc_args[0]), vlc_args);
     }
-    if (!cdplayer_vlc_instance) return;
+    if (!cdplayer_vlc_instance) return 0;
     if (!cdplayer_vlc_player) {
         cdplayer_vlc_player = libvlc_media_player_new(cdplayer_vlc_instance);
         cdplayer_vlc_events = libvlc_media_player_event_manager(cdplayer_vlc_player);
@@ -163,6 +159,7 @@ static void cdplayer_ensure_vlc(void) {
             cdplayer_worker_thread = 0;
         }
     }
+    return cdplayer_vlc_player;
 }
 
 static int cdplayer_build_path(char *buf, size_t buf_size, const char *name) {
@@ -180,21 +177,23 @@ static int cdplayer_build_state_path(char *buf, size_t buf_size) {
     return 0;
 }
 
-static void cdplayer_set_path_state(const char *path, size_t track_index) {
+static void cdplayer_set_path_state(const char *path, int start_pos_s) {
     if (!path || !path[0]) return;
-    cdplayer_position_s = 0;
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
+    if (cdplayer_ensure_vlc()) {
         libvlc_media_t *media = libvlc_media_new_path(cdplayer_vlc_instance, path);
         if (media) {
+            if (start_pos_s) {
+                char start_option[32];
+                snprintf(start_option, sizeof(start_option), ":start-time=%d", start_pos_s);
+                libvlc_media_add_option(media, start_option);
+            }
             libvlc_media_player_set_media(cdplayer_vlc_player, media);
             libvlc_media_release(media);
         }
     }
-    (void)track_index;
 }
 
-static void cdplayer_load_state_file(void) {
+static void cdplayer_load_state_file(int *initial_position) {
     if (!cdplayer_dir[0]) return;
 
     char path[PATH_MAX];
@@ -218,7 +217,7 @@ static void cdplayer_load_state_file(void) {
             long index = strtol(value, NULL, 10);
             if (index > 0) cdplayer_current_track = (size_t)(index - 1);
         } else if (strcasecmp(key, "position") == 0) {
-            cdplayer_position_s = (int)strtol(value, NULL, 10);
+            *initial_position = (int)strtol(value, NULL, 10);
         } else if (strcasecmp(key, "repeat") == 0) {
             cdplayer_repeat = (int)strtol(value, NULL, 10);
         }
@@ -244,8 +243,6 @@ void cdplayer_load_media(char *dir) {
     if (!dir || !dir[0]) return;
 
     cdplayer_free_tracks();
-    cdplayer_playing = 0;
-    cdplayer_position_s = 0;
     cdplayer_repeat = CDPLAYER_REPEAT_OFF;
     snprintf(cdplayer_dir, sizeof(cdplayer_dir), "%s", dir);
 
@@ -279,15 +276,17 @@ void cdplayer_load_media(char *dir) {
         qsort(cdplayer_tracks, cdplayer_track_count, sizeof(char *), cdplayer_compare_names);
     }
 
-    cdplayer_load_state_file();
+    int initial_position = 0;
+    cdplayer_load_state_file(&initial_position);
     if (cdplayer_track_count > 0) {
         if (cdplayer_current_track >= cdplayer_track_count) {
             cdplayer_current_track = 0;
         }
         char path[PATH_MAX];
         if (cdplayer_build_path(path, sizeof(path), cdplayer_tracks[cdplayer_current_track]) == 0) {
-            cdplayer_set_path_state(path, cdplayer_current_track);
+            cdplayer_set_path_state(path, initial_position);
         }
+        libvlc_media_player_play(cdplayer_vlc_player);
     }
 }
 
@@ -323,22 +322,14 @@ void cdplayer_close() {
         libvlc_release(cdplayer_vlc_instance);
         cdplayer_vlc_instance = NULL;
     }
-    cdplayer_playing = 0;
-    cdplayer_position_s = 0;
     cdplayer_free_tracks();
     cdplayer_dir[0] = '\0';
 }
 
 void cdplayer_pause() {
     if (!cdplayer_track_count) return;
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
-        libvlc_media_player_pause(cdplayer_vlc_player);
-        libvlc_state_t state = libvlc_media_player_get_state(cdplayer_vlc_player);
-        cdplayer_playing = state == libvlc_Playing;
-        return;
-    }
-    cdplayer_playing = 0;
+    if (!cdplayer_ensure_vlc()) return;
+    libvlc_media_player_pause(cdplayer_vlc_player);
 }
 
 void cdplayer_play() {
@@ -346,26 +337,22 @@ void cdplayer_play() {
     if (cdplayer_current_track >= cdplayer_track_count) {
         cdplayer_current_track = 0;
     }
-    if (cdplayer_current_track < cdplayer_track_count) {
+    if (!cdplayer_ensure_vlc()) return;
+    libvlc_state_t state = libvlc_media_player_get_state(cdplayer_vlc_player);
+    if (state == libvlc_Paused) {
+        libvlc_media_player_pause(cdplayer_vlc_player);
+    } else if (state != libvlc_Playing) {
         char path[PATH_MAX];
         if (cdplayer_build_path(path, sizeof(path), cdplayer_tracks[cdplayer_current_track]) == 0) {
-            cdplayer_set_path_state(path, cdplayer_current_track);
+            cdplayer_set_path_state(path, 0);
         }
-    }
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
         libvlc_media_player_play(cdplayer_vlc_player);
-        cdplayer_playing = 1;
     }
 }
 
 void cdplayer_stop() {
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
-        libvlc_media_player_stop(cdplayer_vlc_player);
-    }
-    cdplayer_playing = 0;
-    cdplayer_position_s = 0;
+    if (cdplayer_ensure_vlc()) libvlc_media_player_stop(cdplayer_vlc_player);
+    cdplayer_current_track = 0;
 }
 
 void cdplayer_set_track(int n) { // set track no
@@ -373,25 +360,13 @@ void cdplayer_set_track(int n) { // set track no
     if (n < 0) n = 0;
     if ((size_t)n >= cdplayer_track_count) n = (int)cdplayer_track_count - 1;
     cdplayer_current_track = (size_t)n;
-    cdplayer_position_s = 0;
 
     char path[PATH_MAX];
     if (cdplayer_build_path(path, sizeof(path), cdplayer_tracks[cdplayer_current_track]) == 0) {
-        cdplayer_set_path_state(path, cdplayer_current_track);
+        cdplayer_set_path_state(path, 0);
     }
 
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
-        if (cdplayer_build_path(path, sizeof(path), cdplayer_tracks[cdplayer_current_track]) == 0) {
-            libvlc_media_t *media = libvlc_media_new_path(cdplayer_vlc_instance, path);
-            if (media) {
-                libvlc_media_player_set_media(cdplayer_vlc_player, media);
-                libvlc_media_release(media);
-            }
-        }
-        libvlc_media_player_play(cdplayer_vlc_player);
-    }
-    cdplayer_playing = 1;
+    if (cdplayer_ensure_vlc()) libvlc_media_player_play(cdplayer_vlc_player);
 }
 
 void cdplayer_seek_s(int delta_s) { // seek in the current track
@@ -406,8 +381,6 @@ void cdplayer_seek_s(int delta_s) { // seek in the current track
     if (cdplayer_vlc_player) {
         libvlc_media_player_set_time(cdplayer_vlc_player, (libvlc_time_t)new_pos * 1000LL);
     }
-    cdplayer_position_s = new_pos;
-    cdplayer_playing = 1;
 }
 
 void cdplayer_set_repeat(int mode) {
@@ -421,23 +394,13 @@ int cdplayer_get_repeat() {
 }
 
 int cdplayer_get_position_s() {
-    if (!cdplayer_track_count) return 0;
-
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
-        cdplayer_position_s = (int)(libvlc_media_player_get_time(cdplayer_vlc_player) / 1000LL);
-    }
-    return cdplayer_position_s;
+    if (!cdplayer_track_count || !cdplayer_ensure_vlc()) return 0;
+    return (int)(libvlc_media_player_get_time(cdplayer_vlc_player) / 1000LL);
 }
 
 int cdplayer_get_duration_s() {
-    if (!cdplayer_track_count) return 0;
-
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
-        return (int)(libvlc_media_player_get_length(cdplayer_vlc_player) / 1000LL);
-    }
-    return 0;
+    if (!cdplayer_track_count || !cdplayer_ensure_vlc()) return 0;
+    return (int)(libvlc_media_player_get_length(cdplayer_vlc_player) / 1000LL);
 }
 
 int cdplayer_get_track_nr() {
@@ -446,13 +409,8 @@ int cdplayer_get_track_nr() {
 
 int cdplayer_is_playing() {
     if (!cdplayer_track_count) return 0;
-
-    cdplayer_ensure_vlc();
-    if (cdplayer_vlc_player) {
-        libvlc_state_t state = libvlc_media_player_get_state(cdplayer_vlc_player);
-        cdplayer_playing = state == libvlc_Playing;
-    }
-    return cdplayer_playing;
+    if (!cdplayer_ensure_vlc()) return 0;
+    return libvlc_media_player_get_state(cdplayer_vlc_player) == libvlc_Playing;
 }
 
 int cdplayer_get_track_count() {

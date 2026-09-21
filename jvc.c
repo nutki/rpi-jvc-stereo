@@ -222,7 +222,6 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_KEY_DISPLAY_MODE) ir_tx_send_tv(IR_THOMSON_AV);
         if (value == JVC_KEY_INPUT) {
             cdplayer_load_media("/media/HDD/Music/Ray of Light");
-            cdplayer_play();
             input_app = INPUT_CDPLAYER;
             current_window_idx = 7;
         }
@@ -239,6 +238,7 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_REW) cdplayer_seek_s(-30);
         if (value == JVC_REMOTE_KEY_PLAY) cdplayer_play();
         if (value == JVC_REMOTE_KEY_PAUSE) cdplayer_pause();
+        if (value == JVC_REMOTE_KEY_STOP) cdplayer_stop();
         // if (value == JVC_REMOTE_KEY_INFO) send_mpv_keypress('i');
         // if (value == JVC_REMOTE_KEY_FORMAT) send_mpv_keypress('x');
         // if (value == JVC_REMOTE_KEY_TVGUIDE) send_mpv_keypress('r');
