@@ -18,6 +18,7 @@
 #include "curl.h"
 #include "addr.h"
 #include "alsavolume.h"
+#include "cdplayer.h"
 SH1122* oled;
 FrameBuffer* fb;
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -184,6 +185,9 @@ void send_mpv_keypress(char key) {
     write(fd, msg, 2);
     close(fd);
 }
+#define INPUT_MPV 0
+#define INPUT_CDPLAYER 1
+static int input_app = 0;
 static int direct_flag, sa_bass_flag, standby_flag = 1;
 static int text_mode = 0;
 static int headphones_volume = 10, headphones_on = 0;
@@ -216,8 +220,34 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
         if (value == JVC_KEY_BAND) ir_tx_send(IR_TECHNICS_POWER);
         if (value == JVC_KEY_DISPLAY_MODE) ir_tx_send_tv(IR_THOMSON_AV);
+        if (value == JVC_KEY_INPUT) {
+            cdplayer_load_media("/media/HDD/Music/Ray of Light");
+            cdplayer_play();
+            input_app = INPUT_CDPLAYER;
+            current_window_idx = 7;
+        }
     }
-    if (ev_type == EVENT_REMOTE_PRESSED) {
+    if (input_app == INPUT_CDPLAYER && ev_type == EVENT_REMOTE_PRESSED) {
+        // if (value == JVC_REMOTE_KEY_POWER) power_pressed();
+        if (value == JVC_REMOTE_KEY_CH_DOWN || value == JVC_REMOTE_KEY_DOWN) cdplayer_set_track(cdplayer_get_track_nr() - 2);
+        if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) cdplayer_set_track(cdplayer_get_track_nr());
+        if (value >= JVC_REMOTE_KEY_1 && value <= JVC_REMOTE_KEY_9) {
+            cdplayer_set_track(value - JVC_REMOTE_KEY_1);
+        }
+        if (value == JVC_REMOTE_KEY_0) cdplayer_set_track(9);
+        if (value == JVC_REMOTE_KEY_FF) cdplayer_seek_s(30);
+        if (value == JVC_REMOTE_KEY_REW) cdplayer_seek_s(-30);
+        if (value == JVC_REMOTE_KEY_PLAY) cdplayer_play();
+        if (value == JVC_REMOTE_KEY_PAUSE) cdplayer_pause();
+        // if (value == JVC_REMOTE_KEY_INFO) send_mpv_keypress('i');
+        // if (value == JVC_REMOTE_KEY_FORMAT) send_mpv_keypress('x');
+        // if (value == JVC_REMOTE_KEY_TVGUIDE) send_mpv_keypress('r');
+    }
+    if (input_app == INPUT_CDPLAYER && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
+        if (value == JVC_REMOTE_KEY_RIGHT) cdplayer_seek_s(5);
+        if (value == JVC_REMOTE_KEY_LEFT) cdplayer_seek_s(-5);
+    }
+    if (input_app == INPUT_MPV && ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) power_pressed();
         if (value == JVC_REMOTE_KEY_CH_DOWN) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_DOWN) : send_mpv_keypress('s');
         if (value == JVC_REMOTE_KEY_CH_UP) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_UP) : send_mpv_keypress('w');
@@ -251,7 +281,7 @@ static int control_event_callback(int ev_type, int value) {
             text_mode = !text_mode;
         }
     }
-    if (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT) {
+    if (input_app == INPUT_MPV && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
         if (value == JVC_REMOTE_KEY_RIGHT) send_mpv_keypress('>');
         if (value == JVC_REMOTE_KEY_LEFT) send_mpv_keypress('<');
     }
@@ -278,7 +308,9 @@ static int control_event_callback(int ev_type, int value) {
     if (ev_type == EVENT_JACK_DETECT) {
         headphones_on = value;
         alsa_volume_set(value ? headphones_volume : 100);
-        if (value) draw_overlay(FA_HEAPHONES, headphones_volume);
+        static int once = 1;
+        if (once) once = 0;
+        else if (value) draw_overlay(FA_HEAPHONES, headphones_volume);
         else if (get_stereo_power_state() == POWER_ON) draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
         else if(get_tv_power_state() == POWER_ON) draw_overlay(FA_TV FA_VOLUME_UP, -1);
     }
@@ -448,12 +480,32 @@ void update_preview(struct window_t* w) {
 #define CDPREVIEW_W 86
 void update_cdplayer(struct window_t* w) {
     static uint8_t pixels_all[CDPREVIEW_W*48*180];
-    static int inited = 0, frame = 0;
-    if (!inited) {
-        read_file_content("cdplayer/out86b.dat", (char *)pixels_all, sizeof pixels_all);
-        inited = 1;
+    static char cd_dat_path[PATH_MAX];
+    static int frame = 0, speed = 0;
+    char *new_cd_dat_path = cdplayer_get_cd_dat_path();
+    if (strcmp(new_cd_dat_path, cd_dat_path)) {
+        strcpy(cd_dat_path, new_cd_dat_path);
+        read_file_content(cd_dat_path, (char *)pixels_all, sizeof pixels_all);
     }
-    uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(frame++%180);
+    static int prev_duration = -1, prev_position = -1, prev_track_no = -1;
+    int duration = cdplayer_get_duration_s();
+    int position = cdplayer_get_position_s();
+    int track_no = cdplayer_get_track_nr();
+    if (cdplayer_is_playing() && speed < 64) speed++;
+    if (!cdplayer_is_playing() && speed > 0) speed--;
+    frame += speed;
+    if (prev_duration != duration || prev_position != position || prev_track_no != track_no) {
+        framebuffer_fill(w->fb, 0);
+        framebuffer_draw_text_fmt(w->fb, 10, 194 - 86, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
+        font4_set_color(8);
+        framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", cdplayer_get_artist(), cdplayer_get_album_title());
+        font4_set_color(15);
+        framebuffer_draw_text_fmt(w->fb, 14, 0, 38, "%02d %s", track_no, cdplayer_get_song_title());
+    }
+    prev_duration = duration;
+    prev_position = position;
+    prev_track_no = track_no;
+    uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(179 - frame/64%180);
     for (int y = 0; y < 48; y++) {
         uint8_t *dest = w->fb->buffer + y * 128 + 128 - (CDPREVIEW_W + 1) / 2;
         const uint8_t *source = pixels + y * CDPREVIEW_W;
