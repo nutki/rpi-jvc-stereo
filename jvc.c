@@ -47,30 +47,22 @@ int read_file_content(const char* path, char* buffer, size_t buffer_size) {
     return 0;
 }
 
-static FrameBuffer *popup_overlay;
+static FrameBuffer *popup_overlay, *popup_o1, *popup_o2;
 static int popup_overlay_ticks = 0;
-static char *popup_overlay_icon = "";
-static int popup_overlay_progress = -1, popup_overlay_needs_update = 0;
-static void draw_overlay(char *icon, int progress) {
+static void draw_overlay(char *icon, int progress, char *text) {
+    FrameBuffer *p = popup_overlay == popup_o1 ? popup_o2 : popup_o1;
     popup_overlay_ticks = 75;
-    if (strcmp(icon, popup_overlay_icon) || popup_overlay_progress != progress) {
-        popup_overlay_icon = icon;
-        popup_overlay_progress = progress;
-        popup_overlay_needs_update = 1;
-    }
-}
-static void update_overlay() {
-    if (!popup_overlay_needs_update) return;
-    char *icon = popup_overlay_icon;
-    int progress = popup_overlay_progress;
-    framebuffer_fill(popup_overlay, 0);
-    framebuffer_rect(popup_overlay, 1, 1, popup_overlay->width - 2, popup_overlay->height - 2, 15);
-    framebuffer_draw_icon(popup_overlay, popup_overlay->height - 12, 8, 4, icon);
+    framebuffer_fill(p, 0);
+    framebuffer_rect(p, 1, 1, p->width - 2, p->height - 2, 15);
+    framebuffer_draw_icon(p, p->height - 12, 8, 4, icon);
     if (progress >= 0) {
-        framebuffer_fill_rect(popup_overlay, 40, 8, (popup_overlay->width - 50) * progress / 100, popup_overlay->height - 16, 5);
-        framebuffer_rect(popup_overlay, 40, 8, (popup_overlay->width - 50), popup_overlay->height - 16, 15);
+        framebuffer_fill_rect(p, 40, 8, (p->width - 50) * progress / 100, p->height - 16, 5);
+        framebuffer_rect(p, 40, 8, (p->width - 50), p->height - 16, 15);
     }
-    popup_overlay_needs_update = 0;
+    if (text) {
+        framebuffer_draw_text(p, p->height - 16, 40, p->height - 10, text);
+    }
+    popup_overlay = p;
 }
 
 static double vp[5] = { -1, -1, -1, -1, -1 };
@@ -187,6 +179,7 @@ void send_mpv_keypress(char key) {
 }
 #define INPUT_MPV 0
 #define INPUT_CDPLAYER 1
+#define INPUT_NUM_INPUTS 2
 static int input_app = 0;
 static int direct_flag, sa_bass_flag, standby_flag = 1;
 static int text_mode = 0;
@@ -197,11 +190,38 @@ static void power_pressed() {
         send_mpv_keypress('q');
         current_window_idx = 0;
         tv_state_req = POWER_REQUEST_OFF;
+        if (input_app == INPUT_CDPLAYER) {
+            cdplayer_save();
+            cdplayer_stop();
+        }
     } else {
-        system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
-        current_window_idx = 6;
-        if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
+        if (input_app == INPUT_CDPLAYER) {
+            cdplayer_load_media("/media/HDD/Music/Ray of Light");
+            input_app = INPUT_CDPLAYER;
+            current_window_idx = 7;
+        } else {
+            system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
+            current_window_idx = 6;
+            if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
+        }
     }
+}
+static void next_input_pressed() {
+    int running = !standby_flag;
+    if (running) power_pressed();
+    static char *input_names[INPUT_NUM_INPUTS] = { "TV", "CD" };
+    input_app++;
+    input_app %= INPUT_NUM_INPUTS;
+    draw_overlay(FA_INPUT, -1, input_names[input_app]);
+    if (running) power_pressed();
+}
+static int is_window_active(int i);
+static void switch_window(int prev) {
+    int i = current_window_idx;
+    do {
+        i = (i + (prev ? max_window - 1 : 1)) % max_window;
+    } while (!is_window_active(i));
+    current_window_idx = i;
 }
 static void sa_bass_pressed() {
     control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
@@ -216,15 +236,14 @@ static int control_event_callback(int ev_type, int value) {
         }
         if (value == JVC_KEY_S_A_BASS) sa_bass_pressed();
         if (value == JVC_KEY_STANDBY) power_pressed();
-        if (value == JVC_KEY_PREV) current_window_idx = (current_window_idx + max_window - 1) % max_window;
-        if (value == JVC_KEY_NEXT) current_window_idx = (current_window_idx + 1) % max_window;
+        if (value == JVC_KEY_PREV) switch_window(1);
+        if (value == JVC_KEY_NEXT) switch_window(0);
         if (value == JVC_KEY_BAND) ir_tx_send(IR_TECHNICS_POWER);
         if (value == JVC_KEY_DISPLAY_MODE) ir_tx_send_tv(IR_THOMSON_AV);
-        if (value == JVC_KEY_INPUT) {
-            cdplayer_load_media("/media/HDD/Music/Ray of Light");
-            input_app = INPUT_CDPLAYER;
-            current_window_idx = 7;
-        }
+        if (value == JVC_KEY_INPUT) next_input_pressed();
+    }
+    if (ev_type == EVENT_REMOTE_PRESSED) {
+        if (value == JVC_REMOTE_KEY_SOURCE) next_input_pressed();
     }
     if (input_app == INPUT_CDPLAYER && ev_type == EVENT_REMOTE_PRESSED) {
         // if (value == JVC_REMOTE_KEY_POWER) power_pressed();
@@ -241,7 +260,11 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_STOP) cdplayer_stop();
         // if (value == JVC_REMOTE_KEY_INFO) send_mpv_keypress('i');
         // if (value == JVC_REMOTE_KEY_FORMAT) send_mpv_keypress('x');
-        // if (value == JVC_REMOTE_KEY_TVGUIDE) send_mpv_keypress('r');
+        if (value == JVC_REMOTE_KEY_TVGUIDE) {
+            cdplayer_set_repeat(-1);
+            static char *repeat_mode_name[CDPLAYER_REPEAT_NUM_MODES] = { "OFF", "ONE", "ALL", "RANDOM" };
+            draw_overlay(FA_REPEAT, -1, repeat_mode_name[cdplayer_get_repeat()]);
+        }
     }
     if (input_app == INPUT_CDPLAYER && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
         if (value == JVC_REMOTE_KEY_RIGHT) cdplayer_seek_s(5);
@@ -296,13 +319,13 @@ static int control_event_callback(int ev_type, int value) {
             if (headphones_volume < 0) headphones_volume = 0;
             if (headphones_volume > 100) headphones_volume = 100;
             alsa_volume_set(headphones_volume);
-            draw_overlay(FA_HEAPHONES, headphones_volume);
+            draw_overlay(FA_HEAPHONES, headphones_volume, 0);
         } else if (get_stereo_power_state() == POWER_ON) {
             ir_tx_send(down ? IR_TECHNICS_VOL_DOWN : IR_TECHNICS_VOL_UP);
-            draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
+            draw_overlay(FA_VOLUME_UP, -1, "STEREO");
         } else if(get_tv_power_state() == POWER_ON) {
             ir_tx_send_tv(down ? IR_THOMSON_VOL_DOWN : IR_THOMSON_VOL_UP);
-            draw_overlay(FA_TV FA_VOLUME_UP, -1);
+            draw_overlay(FA_VOLUME_UP, -1, "TV");
         }
     }
     if (ev_type == EVENT_JACK_DETECT) {
@@ -310,9 +333,9 @@ static int control_event_callback(int ev_type, int value) {
         alsa_volume_set(value ? headphones_volume : 100);
         static int once = 1;
         if (once) once = 0;
-        else if (value) draw_overlay(FA_HEAPHONES, headphones_volume);
-        else if (get_stereo_power_state() == POWER_ON) draw_overlay(FA_RADIO FA_VOLUME_UP, -1);
-        else if(get_tv_power_state() == POWER_ON) draw_overlay(FA_TV FA_VOLUME_UP, -1);
+        else if (value) draw_overlay(FA_HEAPHONES, headphones_volume, 0);
+        else if (get_stereo_power_state() == POWER_ON) draw_overlay(FA_VOLUME_UP, -1, "STEREO");
+        else if(get_tv_power_state() == POWER_ON) draw_overlay(FA_VOLUME_UP, -1, "TV");
     }
     return shutdown_requested;
 }
@@ -362,6 +385,7 @@ struct window_t {
     FrameBuffer* fb;
     int64_t last_update_time;
     void (*update_func)(struct window_t *w);
+    int (*active_func)(void);
     int32_t update_frequency_s;
 };
 
@@ -405,6 +429,8 @@ static int preview_shm_open_consumer(void) {
     return 0;
 }
 
+static int preview_active(void) { return !standby_flag && (input_app == INPUT_MPV); }
+static int cdplayer_active(void) { return !standby_flag && (input_app == INPUT_CDPLAYER); }
 void update_preview(struct window_t* w) {
     uint8_t pixels[PREVIEW_SHM_BYTES];
     uint32_t first_sequence;
@@ -705,13 +731,19 @@ struct window_t  windows[max_window] = {{
     .update_frequency_s = 5
 }, {
     .update_func = update_preview,
+    .active_func = preview_active,
     .update_frequency_s = 0
 }, {
     .update_func = update_cdplayer,
+    .active_func = cdplayer_active,
     .update_frequency_s = 0
 }};
+static int is_window_active(int i) {
+    return !windows[i].active_func || windows[i].active_func();
+}
 void windows_init() {
-    popup_overlay = framebuffer_create(240, 32);
+    popup_o2 = framebuffer_create(240, 32);
+    popup_overlay = popup_o1 = framebuffer_create(240, 32);
     for (int i = 0; i < sizeof(windows)/sizeof(windows[0]); i++) {
         windows[i].fb = framebuffer_create(256, 48);
         windows[i].last_update_time = 0;
@@ -743,24 +775,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    for (int step = 0; !shutdown_requested; step++) {
+    while (!shutdown_requested) {
         struct window_t* current_window = &windows[current_window_idx];
         int64_t t0 = get_us();
         update_window(current_window);
         framebuffer_blit(fb, current_window->fb, 0, 0);
         if (popup_overlay_ticks > 0) {
-            update_overlay();
             framebuffer_blit(fb, popup_overlay, (fb->width - popup_overlay->width)/2, (fb->height - popup_overlay->height)/2);
             popup_overlay_ticks--;
         }
-        // int64_t rt = get_us() - t0;
-        // printf("%d\n", rt);
         display_show();
         int64_t t1 = get_us(), e1 = t1 - t0;
         if (e1 < 20000) usleep(20000 - e1);
     }
     
-    if (shutdown_requested) display_shutdown_screen();
+    display_shutdown_screen();
+    if (!standby_flag) power_pressed();
 
     preview_shm_close_consumer();
     display_close();

@@ -14,10 +14,6 @@
 #include "cdplayer.h"
 
 #include <vlc/vlc.h>
-#define CDPLAYER_REPEAT_OFF 0
-#define CDPLAYER_REPEAT_ONE 1
-#define CDPLAYER_REPEAT_ALL 2
-#define CDPLAYER_REPEAT_SHUFFLE_ALL 3
 
 static char cdplayer_dir[PATH_MAX];
 static char **cdplayer_tracks = NULL;
@@ -384,8 +380,10 @@ void cdplayer_seek_s(int delta_s) { // seek in the current track
 }
 
 void cdplayer_set_repeat(int mode) {
-    if (mode < CDPLAYER_REPEAT_OFF) mode = CDPLAYER_REPEAT_OFF;
-    if (mode > CDPLAYER_REPEAT_SHUFFLE_ALL) mode = CDPLAYER_REPEAT_SHUFFLE_ALL;
+    if (mode < 0) {
+        mode = (cdplayer_repeat + 1) % CDPLAYER_REPEAT_NUM_MODES;
+    }
+    if (mode >= CDPLAYER_REPEAT_NUM_MODES) mode = CDPLAYER_REPEAT_OFF;
     cdplayer_repeat = mode;
 }
 

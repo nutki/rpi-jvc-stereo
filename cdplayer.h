@@ -1,5 +1,10 @@
 #ifndef CDPLAYER_H
 #define CDPLAYER_H
+#define CDPLAYER_REPEAT_OFF 0
+#define CDPLAYER_REPEAT_ONE 1
+#define CDPLAYER_REPEAT_ALL 2
+#define CDPLAYER_REPEAT_SHUFFLE_ALL 3
+#define CDPLAYER_REPEAT_NUM_MODES 4
 void cdplayer_load_media(char *dir);
 void cdplayer_save(void);
 void cdplayer_close(void);

@@ -226,10 +226,10 @@ static const char *key_labels[12] = {
 void control_event_loop(int (*event_callback)(int ev_type, int value)) {
     int stop = 0;
     if (control_init()) {
-        control_set_led(JVC_LED_STANDBY, 1);
         printf("Control init failed\n");
         return;
     }
+    control_set_led(JVC_LED_STANDBY, 1);
     for (int scan_counter = 0; !stop; scan_counter++) {
         int ir = ir_rx_read();
         if (ir >= 0) event_callback(ir & 1 ? EVENT_REMOTE_REPEAT : EVENT_REMOTE_PRESSED, ir >> 1);
