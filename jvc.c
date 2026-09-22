@@ -227,7 +227,7 @@ static void switch_window(int prev) {
 }
 static void sa_bass_pressed() {
     control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
-    stereo_state_req = sa_bass_flag ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+    if (!standby_flag) stereo_state_req = sa_bass_flag ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
 }
 static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
