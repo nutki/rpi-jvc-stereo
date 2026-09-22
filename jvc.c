@@ -205,6 +205,7 @@ static void power_pressed() {
             current_window_idx = 6;
             if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
         }
+        if (sa_bass_flag) stereo_state_req = POWER_REQUEST_ON;
     }
 }
 static void next_input_pressed() {
