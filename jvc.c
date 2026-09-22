@@ -190,6 +190,7 @@ static void power_pressed() {
         send_mpv_keypress('q');
         current_window_idx = 0;
         tv_state_req = POWER_REQUEST_OFF;
+        stereo_state_req = POWER_REQUEST_OFF;
         if (input_app == INPUT_CDPLAYER) {
             cdplayer_save();
             cdplayer_stop();
