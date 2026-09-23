@@ -237,9 +237,9 @@ static void cdplayer_save_state_file(void) {
 
 void cdplayer_load_media(char *dir) {
     if (!dir || !dir[0]) return;
-    if (!strcmp(cdplayer_dir, dir)) return;
+    if (!strcmp(cdplayer_dir, dir) && cdplayer_is_playing()) return;
 
-    cdplayer_save();
+    if (cdplayer_is_playing()) cdplayer_save();
     cdplayer_free_tracks();
     cdplayer_repeat = CDPLAYER_REPEAT_OFF;
     snprintf(cdplayer_dir, sizeof(cdplayer_dir), "%s", dir);
@@ -273,7 +273,6 @@ void cdplayer_load_media(char *dir) {
     if (cdplayer_track_count > 1) {
         qsort(cdplayer_tracks, cdplayer_track_count, sizeof(char *), cdplayer_compare_names);
     }
-
     int initial_position = 0;
     cdplayer_load_state_file(&initial_position);
     if (cdplayer_track_count > 0) {
@@ -409,7 +408,7 @@ int cdplayer_get_track_nr() {
 
 int cdplayer_is_playing() {
     if (!cdplayer_track_count) return 0;
-    if (!cdplayer_ensure_vlc()) return 0;
+    if (!cdplayer_vlc_instance) return 0;
     return libvlc_media_player_get_state(cdplayer_vlc_player) == libvlc_Playing;
 }
 

@@ -216,14 +216,14 @@ static void load_cd_albums(void) {
             if (!cds) {
                 closedir(artist_dir);
                 closedir(dir);
-                return num_cds;
+                return;
             }
             int len = strlen(entry->d_name) + strlen(album_entry->d_name) + 2;
             cds[num_cds] = malloc(len);
             if (!cds[num_cds]) {
                 closedir(artist_dir);
                 closedir(dir);
-                return num_cds;
+                return;
             }
             snprintf(cds[num_cds], len, "%s/%s", entry->d_name, album_entry->d_name);
             num_cds++;
@@ -279,18 +279,27 @@ static void sa_bass_pressed() {
     control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
     if (!standby_flag) stereo_state_req = sa_bass_flag ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
 }
+static int64_t cd_select_since_us;
 static void cd_select_pressed() {
     if (cd_select_mode) {
         current_cd_index = current_cd_tune_index;
         cd_load();
     } else {
         current_cd_tune_index = current_cd_index;
+        cd_select_since_us = get_us();
     }
     cd_select_mode = !cd_select_mode;
 }
 static void cd_deselect_pressed() {
     if (!cd_select_mode) return;
     cd_select_mode = 0;
+}
+#define CD_SELECT_TIMEOUT_S 10
+static int cd_select_active() {
+    if (cd_select_mode && get_us() - cd_select_since_us > CD_SELECT_TIMEOUT_S * 1000000) {
+        cd_select_mode = 0;
+    }
+    return cd_select_mode;
 }
 static void cd_select_change(int d) {
     if (!cd_select_mode) return;
@@ -595,7 +604,7 @@ void update_cdplayer(struct window_t* w) {
     if (cdplayer_is_playing() && speed < 64) speed++;
     if (!cdplayer_is_playing() && speed > 0) speed--;
     frame += speed;
-    if (cd_select_mode) {
+    if (cd_select_active()) {
         static double display_cd_tune_index = 0;
         double target = current_cd_tune_index * 7.5;
         if (display_cd_tune_index < target - 7.5) display_cd_tune_index = target - 7.5;
@@ -605,9 +614,21 @@ void update_cdplayer(struct window_t* w) {
         framebuffer_fill(w->fb, 0);
         for (int i = 0; i < num_cds; i++) {
             double ypos = display_cd_tune_index - 7.5 * i;
-            if (ypos >= -30 && ypos <= 30)
-            //    framebuffer_draw_text_fmt(w->fb, 12, 0, ypos, cds[i]);
-               framebuffer_draw_text_angle(w->fb, 16, 0, 32, ypos, cds[i]);
+            if (ypos >= -30 && ypos <= 30) {
+                char *name = cds[i];
+                char *slash = strchr(name, '/');
+                if (slash && strlen(slash) > 1) {
+                    char *album = slash + 1, artist[256];
+                    int len = slash - name;
+                    if (len >= sizeof artist) len = sizeof artist - 1;
+                    memcpy(artist, name, len);
+                    artist[len] = 0;
+                    font4_set_color(8);
+                    framebuffer_draw_text_angle(w->fb, 12, 0, 18, ypos, artist);
+                    font4_set_color(15);
+                    framebuffer_draw_text_angle(w->fb, 14, 0, 38, ypos, album);
+                } else framebuffer_draw_text_angle(w->fb, 16, 0, 32, ypos, name);
+            }
         }
     } else {
         if (prev_duration != duration || prev_position != position || prev_track_no != track_no) {
@@ -848,12 +869,50 @@ void update_window(struct window_t* w) {
         w->last_update_time = current_time;
     }
 }
+static void config_load(void) {
+    FILE *file = fopen("jvc.ini", "r");
+    if (!file) return;
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *key = line;
+        char *value = eq + 1;
+        value[strcspn(value, "\r\n")] = '\0';
+        int64_t num_value = strtol(value, NULL, 10);
+        if (!strcmp(key, "cd_player_repeat")) {
+            cdplayer_set_repeat(num_value);
+        } else if (strcmp(key, "input") == 0) {
+            input_app = num_value;
+        } else if (strcmp(key, "direct_mode") == 0) {
+            direct_flag = num_value;
+        } else if (strcmp(key, "headphones_volume") == 0) {
+            headphones_volume = num_value;
+        } else if (strcmp(key, "cd_player_album") == 0) {
+            current_cd_index = num_value;
+        }
+    }
+
+    fclose(file);
+}
+static void config_save(void) {
+    FILE *file = fopen("jvc.ini", "w");
+    if (!file) return;
+    fprintf(file, "cd_player_repeat=%d\n", cdplayer_get_repeat());
+    fprintf(file, "input=%d\n", input_app);
+    fprintf(file, "direct_mode=%d\n", direct_flag);
+    fprintf(file, "headphones_volume=%d\n", headphones_volume);
+    fprintf(file, "cd_player_album=%d\n", current_cd_index);
+    fclose(file);
+}
 int main(int argc, char *argv[]) {
     pthread_t control_thread, power_monitor_thread;
     signal(SIGTERM, handle_shutdown_signal);
     signal(SIGINT, handle_shutdown_signal);
     display_init();
     windows_init();
+    config_load();
 
     if (pthread_create(&control_thread, NULL, control_thread_main, NULL) != 0) {
         fprintf(stderr, "Failed to start control thread\n");
@@ -885,5 +944,6 @@ int main(int argc, char *argv[]) {
 
     preview_shm_close_consumer();
     display_close();
+    config_save();
     return 0;
 }
