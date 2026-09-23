@@ -287,12 +287,6 @@ void cdplayer_load_media(char *dir) {
     }
 }
 
-char *cdplayer_get_cd_dat_path(void) {
-    static char cddatpath[PATH_MAX + 16];
-    snprintf(cddatpath, sizeof cddatpath, "%s/cd.dat", cdplayer_dir);
-    return cddatpath;
-}
-
 void cdplayer_save() {
     cdplayer_save_state_file();
 }

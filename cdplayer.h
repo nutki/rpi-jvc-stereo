@@ -23,5 +23,4 @@ int cdplayer_get_track_count(void);
 char *cdplayer_get_artist(void);
 char *cdplayer_get_song_title(void);
 char *cdplayer_get_album_title(void);
-char *cdplayer_get_cd_dat_path(void);
 #endif

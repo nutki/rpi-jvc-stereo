@@ -231,6 +231,11 @@ static void load_cd_albums(void) {
         closedir(artist_dir);
     }
 }
+char *cdplayer_get_cd_dat_path(int idx) {
+    static char cddatpath[PATH_MAX + 16];
+    snprintf(cddatpath, sizeof cddatpath, CD_ALBUMS_PATH "/%s/cd.dat", cds[idx]);
+    return cddatpath;
+}
 static int preview_active(void) { return !standby_flag && (input_app == INPUT_MPV); }
 static int cdplayer_active(void) { return !standby_flag && (input_app == INPUT_CDPLAYER); }
 static void power_pressed() {
@@ -303,6 +308,7 @@ static int cd_select_active() {
 }
 static void cd_select_change(int d) {
     if (!cd_select_mode) return;
+    cd_select_since_us = get_us();
     current_cd_tune_index += d;
     if (current_cd_tune_index < 0) current_cd_tune_index = 0;
     if (current_cd_tune_index >= num_cds) current_cd_tune_index = num_cds - 1;
@@ -590,21 +596,19 @@ void update_preview(struct window_t* w) {
 #define CDPREVIEW_W 86
 void update_cdplayer(struct window_t* w) {
     static uint8_t pixels_all[CDPREVIEW_W*48*180];
-    static char cd_dat_path[PATH_MAX];
-    static int frame = 0, speed = 0;
-    char *new_cd_dat_path = cdplayer_get_cd_dat_path();
-    if (strcmp(new_cd_dat_path, cd_dat_path)) {
-        strcpy(cd_dat_path, new_cd_dat_path);
-        read_file_content(cd_dat_path, (char *)pixels_all, sizeof pixels_all);
-    }
+    static int frame = 0, speed = 0, wpos = 0;
     static int prev_duration = -1, prev_position = -1, prev_track_no = -1;
+    static int prev_cd_index = -1;
+    if (prev_cd_index != current_cd_index) frame = speed = 0;
+    prev_cd_index = current_cd_index;
     int duration = cdplayer_get_duration_s();
     int position = cdplayer_get_position_s();
     int track_no = cdplayer_get_track_nr();
     if (cdplayer_is_playing() && speed < 64) speed++;
     if (!cdplayer_is_playing() && speed > 0) speed--;
     frame += speed;
-    if (cd_select_active()) {
+    int cd_select_in_menu = cd_select_active();
+    if (cd_select_in_menu) {
         static double display_cd_tune_index = 0;
         double target = current_cd_tune_index * 7.5;
         if (display_cd_tune_index < target - 7.5) display_cd_tune_index = target - 7.5;
@@ -643,11 +647,24 @@ void update_cdplayer(struct window_t* w) {
         prev_position = position;
         prev_track_no = track_no;
     }
-    uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(179 - frame/64%180);
+    static int loaded_cd_index = -1;
+    int effective_cd_name_index = cd_select_in_menu ? current_cd_tune_index : current_cd_index;
+    if (effective_cd_name_index != loaded_cd_index) {
+        if (wpos < CDPREVIEW_W) wpos += 6;
+    } else {
+        if (wpos > 0) wpos -= 6;
+    }
+    if (wpos >= CDPREVIEW_W && loaded_cd_index != effective_cd_name_index) {
+        char *fname = cdplayer_get_cd_dat_path(effective_cd_name_index);
+        read_file_content(fname, (char *)pixels_all, sizeof pixels_all);
+        loaded_cd_index = effective_cd_name_index;
+    }
+    int effective_frame = effective_cd_name_index == current_cd_index ? frame : 0;
+    uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(179 - effective_frame/64%180);
     for (int y = 0; y < 48; y++) {
-        uint8_t *dest = w->fb->buffer + y * 128 + 128 - (CDPREVIEW_W + 1) / 2;
+        uint8_t *dest = w->fb->buffer + y * 128 + 128 - (CDPREVIEW_W + 1) / 2 + wpos/2;
         const uint8_t *source = pixels + y * CDPREVIEW_W;
-        for (int x = 0; x < CDPREVIEW_W; x += 2) {
+        for (int x = 0; x < CDPREVIEW_W - wpos; x += 2) {
             uint8_t v0 = source[x] >> 4;
             uint8_t v1 = source[x + 1] >> 4;
             if ((source[x] & 0x0f) > (rand() & 0x0f) && v0 < 15) v0++;
