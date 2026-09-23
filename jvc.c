@@ -607,15 +607,18 @@ void update_cdplayer(struct window_t* w) {
     if (cdplayer_is_playing() && speed < 64) speed++;
     if (!cdplayer_is_playing() && speed > 0) speed--;
     frame += speed;
+    int cleared = 0;
     int cd_select_in_menu = cd_select_active();
+    static int prev_cd_select_in_menu = 0;
     if (cd_select_in_menu) {
         static double display_cd_tune_index = 0;
         double target = current_cd_tune_index * 7.5;
-        if (display_cd_tune_index < target - 7.5) display_cd_tune_index = target - 7.5;
+        if (!prev_cd_select_in_menu) display_cd_tune_index = target;
+        else if (display_cd_tune_index < target - 7.5) display_cd_tune_index = target - 7.5;
         else if (display_cd_tune_index < target) display_cd_tune_index+=1.25;
         else if (display_cd_tune_index > target + 7.5) display_cd_tune_index = target + 7.5;
         else if (display_cd_tune_index > target) display_cd_tune_index-=1.25;
-        framebuffer_fill(w->fb, 0);
+        framebuffer_fill(w->fb, 0); cleared = 1;
         for (int i = 0; i < num_cds; i++) {
             double ypos = display_cd_tune_index - 7.5 * i;
             if (ypos >= -30 && ypos <= 30) {
@@ -636,7 +639,7 @@ void update_cdplayer(struct window_t* w) {
         }
     } else {
         if (prev_duration != duration || prev_position != position || prev_track_no != track_no) {
-            framebuffer_fill(w->fb, 0);
+            framebuffer_fill(w->fb, 0); cleared = 1;
             framebuffer_draw_text_fmt(w->fb, 10, 194 - 86, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
             font4_set_color(8);
             framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", cdplayer_get_artist(), cdplayer_get_album_title());
@@ -647,23 +650,34 @@ void update_cdplayer(struct window_t* w) {
         prev_position = position;
         prev_track_no = track_no;
     }
+    prev_cd_select_in_menu = cd_select_in_menu;
     static int loaded_cd_index = -1;
     int effective_cd_name_index = cd_select_in_menu ? current_cd_tune_index : current_cd_index;
+    int needs_cd_clear = 0;
+#define CD_SLIDE_SPEED 6
     if (effective_cd_name_index != loaded_cd_index) {
-        if (wpos < CDPREVIEW_W) wpos += 6;
+        if (wpos < CDPREVIEW_W) {
+            wpos += CD_SLIDE_SPEED;
+            if (wpos > CDPREVIEW_W) wpos = CDPREVIEW_W;
+            if (!cleared) needs_cd_clear = 1;
+        }
     } else {
-        if (wpos > 0) wpos -= 6;
+        wpos -= CD_SLIDE_SPEED;
+        if (wpos < 0) wpos = 0;
     }
     if (wpos >= CDPREVIEW_W && loaded_cd_index != effective_cd_name_index) {
         char *fname = cdplayer_get_cd_dat_path(effective_cd_name_index);
         read_file_content(fname, (char *)pixels_all, sizeof pixels_all);
         loaded_cd_index = effective_cd_name_index;
     }
-    int effective_frame = effective_cd_name_index == current_cd_index ? frame : 0;
+    int effective_frame = loaded_cd_index == current_cd_index ? frame : 0;
     uint8_t *pixels = pixels_all + CDPREVIEW_W*48*(179 - effective_frame/64%180);
     for (int y = 0; y < 48; y++) {
         uint8_t *dest = w->fb->buffer + y * 128 + 128 - (CDPREVIEW_W + 1) / 2 + wpos/2;
         const uint8_t *source = pixels + y * CDPREVIEW_W;
+        if (needs_cd_clear) for(int x = 0; x < CD_SLIDE_SPEED && x < (CDPREVIEW_W - wpos); x += 2) {
+            dest[-x / 2 - 1] = 0;
+        }
         for (int x = 0; x < CDPREVIEW_W - wpos; x += 2) {
             uint8_t v0 = source[x] >> 4;
             uint8_t v1 = source[x + 1] >> 4;
