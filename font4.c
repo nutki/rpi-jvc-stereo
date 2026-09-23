@@ -5,8 +5,16 @@
 #include <string.h>
 
 static int draw_color = 16;
+static int rotation_center_x = 256 * 1.6;
+static int rotation_center_y = 48 * -2.2;
+
 void font4_set_color(int c) {
     draw_color = c;
+}
+
+void font4_set_rotation_center(int cx, int cy) {
+    rotation_center_x = cx;
+    rotation_center_y = cy;
 }
 
 static inline unsigned char to4(unsigned char v) {
@@ -64,6 +72,7 @@ void render_text(font4_t *f,
                       pitch, 0.0, text);
 }
 
+int cx = 0, cy = 200;
 void render_text_angle(font4_t *f,
                        unsigned char *buf,
                        int buf_w, int buf_h,
@@ -86,9 +95,15 @@ void render_text_angle(font4_t *f,
         (FT_Fixed)lround(angle_cos * 65536.0)
     };
     FT_Set_Transform(f->face, &transform, NULL);
+
+    double dx = (double)x - rotation_center_x;
+    double dy = (double)y - rotation_center_y;
+    double x_rot = rotation_center_x + dx * angle_cos - dy * angle_sin;
+    double y_rot = rotation_center_y + dx * angle_sin + dy * angle_cos;
+
     FT_Vector pen = {
-        (FT_Pos)x << 6,
-        (FT_Pos)y << 6
+        (FT_Pos)lround(x_rot) << 6,
+        (FT_Pos)lround(y_rot) << 6
     };
 
     for (const unsigned char *p = (const unsigned char*)text; *p; p++) {
