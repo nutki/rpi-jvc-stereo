@@ -5,8 +5,8 @@
 #include <string.h>
 
 static int draw_color = 16;
-static int rotation_center_x = 256 * 1.6;
-static int rotation_center_y = 48 * -2.2;
+static int rotation_center_x = 420;
+static int rotation_center_y = -138;
 
 void font4_set_color(int c) {
     draw_color = c;
