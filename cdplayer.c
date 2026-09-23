@@ -237,7 +237,9 @@ static void cdplayer_save_state_file(void) {
 
 void cdplayer_load_media(char *dir) {
     if (!dir || !dir[0]) return;
+    if (!strcmp(cdplayer_dir, dir)) return;
 
+    cdplayer_save();
     cdplayer_free_tracks();
     cdplayer_repeat = CDPLAYER_REPEAT_OFF;
     snprintf(cdplayer_dir, sizeof(cdplayer_dir), "%s", dir);
