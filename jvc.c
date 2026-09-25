@@ -65,6 +65,9 @@ static void draw_overlay(char *icon, int progress, char *text) {
     }
     popup_overlay = p;
 }
+static void hide_overlay() {
+    popup_overlay_ticks = 0;
+}
 
 static double vp[5] = { -1, -1, -1, -1, -1 };
 #define POWER_SOCKET_TV 2
@@ -304,6 +307,7 @@ static void cd_select_pressed() {
     } else {
         current_cd_tune_index = current_cd_index;
         cd_select_since_us = get_us();
+        hide_overlay();
     }
     cd_select_mode = !cd_select_mode;
 }
@@ -335,16 +339,13 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_KEY_STANDBY) power_pressed();
         if (value == JVC_KEY_PREV) switch_window(1);
         if (value == JVC_KEY_NEXT) switch_window(0);
-        if (value == JVC_KEY_BAND) if (cdplayer_active()) cd_select_pressed();
+        if (value == JVC_KEY_BAND) if (cdplayer_active() && current_window_idx == 7) cd_select_pressed();
         if (value == JVC_KEY_INPUT) cd_select_mode ? cd_deselect_pressed() : next_input_pressed();
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_SOURCE) next_input_pressed();
     }
-    if (input_app == INPUT_CDPLAYER && ev_type == EVENT_REMOTE_PRESSED) {
-        // if (value == JVC_REMOTE_KEY_POWER) power_pressed();
-        if (value == JVC_REMOTE_KEY_CH_DOWN || value == JVC_REMOTE_KEY_DOWN) cd_select_mode ? cd_select_change(-1) : cdplayer_set_track(cdplayer_get_track_nr() - 2);
-        if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) cd_select_mode ? cd_select_change(1) : cdplayer_set_track(cdplayer_get_track_nr());
+    if (cdplayer_active() && ev_type == EVENT_REMOTE_PRESSED) {
         if (value >= JVC_REMOTE_KEY_1 && value <= JVC_REMOTE_KEY_9) {
             cdplayer_set_track(value - JVC_REMOTE_KEY_1);
         }
@@ -354,23 +355,23 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_PLAY) cdplayer_play();
         if (value == JVC_REMOTE_KEY_PAUSE) cdplayer_pause();
         if (value == JVC_REMOTE_KEY_STOP) cdplayer_stop();
-        // if (value == JVC_REMOTE_KEY_INFO) send_mpv_keypress('i');
-        // if (value == JVC_REMOTE_KEY_FORMAT) send_mpv_keypress('x');
         if (value == JVC_REMOTE_KEY_TVGUIDE) {
             cdplayer_set_repeat(-1);
             static char *repeat_mode_name[CDPLAYER_REPEAT_NUM_MODES] = { "OFF", "ONE", "ALL", "RANDOM" };
             draw_overlay(FA_REPEAT, -1, repeat_mode_name[cdplayer_get_repeat()]);
         }
-        if (value == JVC_REMOTE_KEY_OK) cd_select_pressed();
-        if (value == JVC_REMOTE_KEY_BACK) cd_deselect_pressed();
+        if (value == JVC_REMOTE_KEY_OK && current_window_idx == 7) cd_select_pressed();
+        if (value == JVC_REMOTE_KEY_BACK && current_window_idx == 7) cd_deselect_pressed();
     }
-    if (input_app == INPUT_CDPLAYER && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
+    if (cdplayer_active() && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
         if (value == JVC_REMOTE_KEY_RIGHT) cdplayer_seek_s(5);
         if (value == JVC_REMOTE_KEY_LEFT) cdplayer_seek_s(-5);
+        if (value == JVC_REMOTE_KEY_CH_DOWN || value == JVC_REMOTE_KEY_DOWN) cd_select_mode ? cd_select_change(-1) : cdplayer_set_track_prev();
+        if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) cd_select_mode ? cd_select_change(1) : cdplayer_set_track_next();
     }
-    if (input_app == INPUT_MPV && ev_type == EVENT_REMOTE_PRESSED) {
+    if (preview_active() && ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) power_pressed();
-        if (value == JVC_KEY_DISPLAY_MODE && !standby_flag) {
+        if (value == JVC_KEY_DISPLAY_MODE) {
             direct_flag = !direct_flag;
             if (!direct_flag) tv_state_req_set(1);
         }
@@ -388,7 +389,7 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_BLUE && text_mode) ir_tx_send_tv(IR_THOMSON_BLUE);
         if (value == JVC_REMOTE_KEY_OPTIONS && text_mode) ir_tx_send_tv(IR_THOMSON_MENU);
         if (value == JVC_REMOTE_KEY_EXIT) {
-            if (tv_state_req == POWER_REQUEST_NONE) tv_state_req_toggle();
+            tv_state_req_toggle();
             text_mode = 0;
         }
         if (value == JVC_REMOTE_KEY_FF) send_mpv_keypress('.');
@@ -406,11 +407,11 @@ static int control_event_callback(int ev_type, int value) {
             text_mode = !text_mode;
         }
     }
-    if (input_app == INPUT_MPV && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
+    if (preview_active() && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
         if (value == JVC_REMOTE_KEY_RIGHT) send_mpv_keypress('>');
         if (value == JVC_REMOTE_KEY_LEFT) send_mpv_keypress('<');
     }
-    if (cd_select_mode && (ev_type == EVENT_ENCODER_PLUS || ev_type == EVENT_ENCODER_MINUS)) {
+    if (cd_select_mode && (ev_type == EVENT_ENCODER_PLUS || ev_type == EVENT_ENCODER_MINUS) && current_window_idx == 7) {
         cd_select_change(ev_type == EVENT_ENCODER_PLUS ? 1 : -1);
         return shutdown_requested; // TODO refactor volume changes
     }
@@ -703,7 +704,9 @@ void update_cdplayer(struct window_t* w) {
     }
     if (wpos >= CDPREVIEW_W && loaded_cd_index != effective_cd_name_index) {
         char *fname = cdplayer_get_cd_dat_path(effective_cd_name_index);
-        read_file_content(fname, (char *)pixels_all, sizeof pixels_all);
+        if (read_file_content(fname, (char *)pixels_all, sizeof pixels_all)) {
+            memset(pixels_all, 0, sizeof pixels_all);
+        }
         loaded_cd_index = effective_cd_name_index;
     }
     int effective_frame = loaded_cd_index == current_cd_index ? frame : 0;

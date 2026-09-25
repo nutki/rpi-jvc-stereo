@@ -12,6 +12,8 @@ void cdplayer_pause(void);
 void cdplayer_play(void);
 void cdplayer_stop(void);
 void cdplayer_set_track(int n);
+void cdplayer_set_track_next(void);
+void cdplayer_set_track_prev(void);
 void cdplayer_seek_s(int delta_s);
 void cdplayer_set_repeat(int mode);
 int cdplayer_get_repeat(void);
