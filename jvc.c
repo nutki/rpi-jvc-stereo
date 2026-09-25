@@ -255,7 +255,7 @@ static void power_pressed() {
             cd_load();
             input_app = INPUT_CDPLAYER;
             current_window_idx = 7;
-            if (direct_flag) stereo_state_req = POWER_REQUEST_ON;
+            if (!headphones_on) stereo_state_req = POWER_REQUEST_ON;
         } else {
             system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
             current_window_idx = 6;
