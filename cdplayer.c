@@ -36,7 +36,6 @@ static void cdplayer_handle_media_ended(void) {
 
     if (cdplayer_repeat == CDPLAYER_REPEAT_ONE) {
         cdplayer_set_track((int)cdplayer_current_track);
-        cdplayer_play();
         return;
     }
 
@@ -47,24 +46,18 @@ static void cdplayer_handle_media_ended(void) {
                 next = (size_t)(rand() % cdplayer_track_count);
             } while (next == cdplayer_current_track);
         }
-        cdplayer_current_track = next;
-        cdplayer_set_track((int)cdplayer_current_track);
-        cdplayer_play();
+        cdplayer_set_track((int)next);
         return;
     }
 
     if (cdplayer_repeat == CDPLAYER_REPEAT_ALL) {
         size_t next = (cdplayer_current_track + 1) % cdplayer_track_count;
-        cdplayer_current_track = next;
-        cdplayer_set_track((int)cdplayer_current_track);
-        cdplayer_play();
+        cdplayer_set_track((int)next);
         return;
     }
 
     if (cdplayer_current_track + 1 < cdplayer_track_count) {
-        cdplayer_current_track++;
-        cdplayer_set_track((int)cdplayer_current_track);
-        cdplayer_play();
+        cdplayer_set_track((int)cdplayer_current_track + 1);
         return;
     }
 
