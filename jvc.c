@@ -647,6 +647,7 @@ void update_cdplayer(struct window_t* w) {
             framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", cdplayer_get_artist(), cdplayer_get_album_title());
             font4_set_color(15);
             framebuffer_draw_text_fmt(w->fb, 14, 0, 38, "%02d %s", track_no, cdplayer_get_song_title());
+            framebuffer_draw_text(w->fb, 10, 0, 10, cdplayer_get_codec());
         }
         prev_duration = duration;
         prev_position = position;

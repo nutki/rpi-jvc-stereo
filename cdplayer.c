@@ -451,3 +451,29 @@ char *cdplayer_get_album_title() {
     snprintf(album, sizeof(album), "%s", meta);
     return album;
 }
+#define VLC_FOURCC(a,b,c,d) (((uint32_t)(a)) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
+#define VLC_CODEC_MP4A VLC_FOURCC('m','p','4','a')
+#define VLC_CODEC_MPGA VLC_FOURCC('m','p','g','a')
+#define VLC_CODEC_FLAC VLC_FOURCC('f','l','a','c')
+char *cdplayer_get_codec() {
+    if (!cdplayer_vlc_player) return "";
+    libvlc_media_t *media = libvlc_media_player_get_media(cdplayer_vlc_player);
+    if (!media) return "";
+    int current_id = libvlc_audio_get_track(cdplayer_vlc_player);
+    libvlc_media_track_t **tracks;
+    unsigned count = libvlc_media_tracks_get(media, &tracks);
+    for (unsigned i = 0; i < count; ++i) {
+        libvlc_media_track_t *track = tracks[i];
+        if (track->i_type == libvlc_track_audio && track->i_id == current_id) {
+            if (track->i_codec == VLC_CODEC_FLAC) return "FLAC";
+            else if (track->i_codec == VLC_CODEC_MP4A) return "AAC";
+            else if (track->i_codec == VLC_CODEC_MPGA) {
+                static char codec[16] = {0};
+                snprintf(codec, sizeof codec, "MP3 %d", track->i_bitrate/1000);
+                return codec;
+            }
+            return "Unknown";
+        }
+    }
+    return "";
+}
