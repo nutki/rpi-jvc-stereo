@@ -147,14 +147,16 @@ static void update_power_states(void) {
     prev_tv_state_req = tv_state_req;
 }
 void tv_state_req_set(int v) {
-    if (v != (get_tv_power_state() == POWER_ON)) tv_state_req = v ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+    int c = tv_state_req == POWER_REQUEST_NONE ? get_tv_power_state() == POWER_ON : stereo_state_req == POWER_REQUEST_ON;
+    if (v != c) tv_state_req = v ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
 }
 void tv_state_req_toggle() {
     if (tv_state_req != POWER_REQUEST_NONE) tv_state_req = tv_state_req == POWER_REQUEST_OFF ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
     else tv_state_req = get_tv_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
 }
 void stereo_state_req_set(int v) {
-    if (v != (get_stereo_power_state() == POWER_ON)) stereo_state_req = v ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+    int c = stereo_state_req == POWER_REQUEST_NONE ? get_stereo_power_state() == POWER_ON : stereo_state_req == POWER_REQUEST_ON;
+    if (v != c) stereo_state_req = v ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
 }
 void stereo_state_req_toggle() {
     if (stereo_state_req != POWER_REQUEST_NONE) stereo_state_req = stereo_state_req == POWER_REQUEST_OFF ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
@@ -443,6 +445,8 @@ static int control_event_callback(int ev_type, int value) {
         else if (value) draw_overlay(FA_HEAPHONES, headphones_volume, 0);
         else if (get_stereo_power_state() == POWER_ON) draw_overlay(FA_VOLUME_UP, -1, "STEREO");
         else if(get_tv_power_state() == POWER_ON) draw_overlay(FA_VOLUME_UP, -1, "TV");
+        if (value) stereo_state_req_set(0);
+        else if (!standby_flag && get_tv_power_state() == POWER_OFF) stereo_state_req_set(1);
     }
     return shutdown_requested;
 }
