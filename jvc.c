@@ -143,6 +143,20 @@ static void update_power_states(void) {
     prev_stereo_state_req = stereo_state_req;
     prev_tv_state_req = tv_state_req;
 }
+void tv_state_req_set(int v) {
+    if (v != (get_tv_power_state() == POWER_ON)) tv_state_req = v ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+}
+void tv_state_req_toggle() {
+    if (tv_state_req != POWER_REQUEST_NONE) tv_state_req = tv_state_req == POWER_REQUEST_OFF ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+    else tv_state_req = get_tv_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
+}
+void stereo_state_req_set(int v) {
+    if (v != (get_stereo_power_state() == POWER_ON)) stereo_state_req = v ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+}
+void stereo_state_req_toggle() {
+    if (stereo_state_req != POWER_REQUEST_NONE) stereo_state_req = stereo_state_req == POWER_REQUEST_OFF ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+    else stereo_state_req = get_stereo_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
+}
 static void *power_monitor_thread_main(void *arg) {
     (void)arg;
     while (!shutdown_requested) {
@@ -243,8 +257,8 @@ static void power_pressed() {
     if (standby_flag) {
         send_mpv_keypress('q');
         current_window_idx = 0;
-        tv_state_req = POWER_REQUEST_OFF; // DELAY power off only here?
-        stereo_state_req = POWER_REQUEST_OFF;
+        tv_state_req_set(0); // DELAY power off only here?
+        stereo_state_req_set(0);
         if (input_app == INPUT_CDPLAYER) {
             cdplayer_save();
             cdplayer_stop();
@@ -255,12 +269,12 @@ static void power_pressed() {
             cd_load(0);
             input_app = INPUT_CDPLAYER;
             current_window_idx = 7;
-            if (!headphones_on) stereo_state_req = POWER_REQUEST_ON;
+            if (!headphones_on) stereo_state_req_set(1);
         } else {
             system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
             current_window_idx = 6;
-            if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
-            if (direct_flag && !headphones_on) stereo_state_req = POWER_REQUEST_ON;
+            if (!direct_flag) tv_state_req_set(1);
+            if (direct_flag && !headphones_on) stereo_state_req_set(1);
         }
     }
 }
@@ -280,9 +294,6 @@ static void switch_window(int prev) {
         i = (i + (prev ? max_window - 1 : 1)) % max_window;
     } while (!is_window_active(i));
     current_window_idx = i;
-}
-static void sa_bass_pressed() {
-    stereo_state_req = get_stereo_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
 }
 static int64_t cd_select_since_us;
 static void cd_select_pressed() {
@@ -318,9 +329,9 @@ static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
         if (value == JVC_KEY_DIRECT) {
-            tv_state_req = get_tv_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
+            tv_state_req_toggle();
         }
-        if (value == JVC_KEY_S_A_BASS) sa_bass_pressed();
+        if (value == JVC_KEY_S_A_BASS) stereo_state_req_toggle();
         if (value == JVC_KEY_STANDBY) power_pressed();
         if (value == JVC_KEY_PREV) switch_window(1);
         if (value == JVC_KEY_NEXT) switch_window(0);
@@ -361,7 +372,7 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_POWER) power_pressed();
         if (value == JVC_KEY_DISPLAY_MODE && !standby_flag) {
             direct_flag = !direct_flag;
-            if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
+            if (!direct_flag) tv_state_req_set(1);
         }
         if (value == JVC_REMOTE_KEY_CH_DOWN) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_DOWN) : send_mpv_keypress('s');
         if (value == JVC_REMOTE_KEY_CH_UP) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_UP) : send_mpv_keypress('w');
@@ -377,7 +388,7 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_BLUE && text_mode) ir_tx_send_tv(IR_THOMSON_BLUE);
         if (value == JVC_REMOTE_KEY_OPTIONS && text_mode) ir_tx_send_tv(IR_THOMSON_MENU);
         if (value == JVC_REMOTE_KEY_EXIT) {
-            if (tv_state_req == POWER_REQUEST_NONE) tv_state_req = get_tv_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
+            if (tv_state_req == POWER_REQUEST_NONE) tv_state_req_toggle();
             text_mode = 0;
         }
         if (value == JVC_REMOTE_KEY_FF) send_mpv_keypress('.');
