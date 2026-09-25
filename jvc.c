@@ -190,10 +190,10 @@ static int cd_select_mode = 0;
 static char **cds;
 static int num_cds;
 static int current_cd_index = 0, current_cd_tune_index = 0;
-static void cd_load(void) {
+static void cd_load(int autostart) {
     char path[PATH_MAX];
     snprintf(path, sizeof path, CD_ALBUMS_PATH "/%s", cds[current_cd_index]);
-    cdplayer_load_media(path);
+    cdplayer_load_media(path, autostart);
 }
 static void load_cd_albums(void) {
     DIR *dir = opendir(CD_ALBUMS_PATH);
@@ -252,7 +252,7 @@ static void power_pressed() {
     } else {
         if (input_app == INPUT_CDPLAYER) {
             if (!cds) load_cd_albums();
-            cd_load();
+            cd_load(0);
             input_app = INPUT_CDPLAYER;
             current_window_idx = 7;
             if (!headphones_on) stereo_state_req = POWER_REQUEST_ON;
@@ -288,7 +288,8 @@ static int64_t cd_select_since_us;
 static void cd_select_pressed() {
     if (cd_select_mode) {
         current_cd_index = current_cd_tune_index;
-        cd_load();
+        cdplayer_save();
+        cd_load(1);
     } else {
         current_cd_tune_index = current_cd_index;
         cd_select_since_us = get_us();
@@ -599,15 +600,16 @@ void update_preview(struct window_t* w) {
 void update_cdplayer(struct window_t* w) {
     static uint8_t pixels_all[CDPREVIEW_W*48*180];
     static int frame = 0, speed = 0, wpos = 0;
-    static int prev_duration = -1, prev_position = -1, prev_track_no = -1;
+    static int prev_duration = -1, prev_position = -1, prev_track_no = -1, prev_play_state = -1;
     static int prev_cd_index = -1;
     if (prev_cd_index != current_cd_index) frame = speed = 0;
     prev_cd_index = current_cd_index;
     int duration = cdplayer_get_duration_s();
     int position = cdplayer_get_position_s();
     int track_no = cdplayer_get_track_nr();
-    if (cdplayer_is_playing() && speed < 64) speed++;
-    if (!cdplayer_is_playing() && speed > 0) speed--;
+    int play_state = cdplayer_get_play_state();
+    int loading_state = cdplayer_get_loading_state();
+    speed += play_state == CDPLAYER_STATE_PLAY ? speed < 64 : -(speed > 0);
     frame += speed;
     int cleared = 0;
     int cd_select_in_menu = cd_select_active();
@@ -640,18 +642,38 @@ void update_cdplayer(struct window_t* w) {
             }
         }
     } else {
-        if (prev_duration != duration || prev_position != position || prev_track_no != track_no) {
+        if (prev_duration != duration || prev_position != position || prev_track_no != track_no || prev_play_state != play_state || prev_cd_select_in_menu) {
             framebuffer_fill(w->fb, 0); cleared = 1;
-            framebuffer_draw_text_fmt(w->fb, 10, 194 - 86, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
-            font4_set_color(8);
-            framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", cdplayer_get_artist(), cdplayer_get_album_title());
-            font4_set_color(15);
-            framebuffer_draw_text_fmt(w->fb, 14, 0, 38, "%02d %s", track_no, cdplayer_get_song_title());
-            framebuffer_draw_text(w->fb, 10, 0, 10, cdplayer_get_codec());
+            if (loading_state) {
+                framebuffer_draw_text_fmt(w->fb, 10, 194 - 86, 10, "00:00/%02d:%02d", duration/60, duration%60);
+                font4_set_color(8);
+                framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", cdplayer_get_artist(), cdplayer_get_album_title());
+                font4_set_color(15);
+                framebuffer_draw_text_fmt(w->fb, 14, 0, 38, "%02d", track_no);
+            } else if (play_state != CDPLAYER_STATE_STOP) {
+                framebuffer_draw_text_fmt(w->fb, 10, 194 - 86, 10, "%02d:%02d/%02d:%02d", position/60, position%60, duration/60, duration%60);
+                font4_set_color(8);
+                framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", cdplayer_get_artist(), cdplayer_get_album_title());
+                font4_set_color(15);
+                framebuffer_draw_text_fmt(w->fb, 14, 0, 38, "%02d %s", track_no, cdplayer_get_song_title());
+                framebuffer_draw_text(w->fb, 10, 0, 10, cdplayer_get_codec());
+            } else {
+                font4_set_color(8);
+                char *artist = cdplayer_get_artist(), *title = cdplayer_get_album_title();
+                char *path = cds[current_cd_index], *slash = strchr(path, '/');
+                if (!strlen(artist) && !strlen(title) && slash) {
+                    framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%.*s - %s", slash - path, path, slash + 1);
+                } else {
+                    framebuffer_draw_text_fmt(w->fb, 12, 0, 22, "%s - %s", artist, title);
+                }
+                framebuffer_draw_text_fmt(w->fb, 14, 0, 38, "Tracks: %02d", cdplayer_get_track_count());
+                font4_set_color(15);
+            }
         }
         prev_duration = duration;
         prev_position = position;
         prev_track_no = track_no;
+        prev_play_state = play_state;
     }
     prev_cd_select_in_menu = cd_select_in_menu;
     static int loaded_cd_index = -1;

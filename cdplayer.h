@@ -5,7 +5,7 @@
 #define CDPLAYER_REPEAT_ALL 2
 #define CDPLAYER_REPEAT_SHUFFLE_ALL 3
 #define CDPLAYER_REPEAT_NUM_MODES 4
-void cdplayer_load_media(char *dir);
+void cdplayer_load_media(char *dir, int autostart);
 void cdplayer_save(void);
 void cdplayer_close(void);
 void cdplayer_pause(void);
@@ -18,7 +18,11 @@ int cdplayer_get_repeat(void);
 int cdplayer_get_position_s(void);
 int cdplayer_get_duration_s(void);
 int cdplayer_get_track_nr(void);
-int cdplayer_is_playing(void);
+#define CDPLAYER_STATE_STOP 0
+#define CDPLAYER_STATE_PLAY 1
+#define CDPLAYER_STATE_PAUSE 2
+int cdplayer_get_play_state(void);
+int cdplayer_get_loading_state(void);
 int cdplayer_get_track_count(void);
 char *cdplayer_get_artist(void);
 char *cdplayer_get_song_title(void);
