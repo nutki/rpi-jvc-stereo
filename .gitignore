@@ -1,1 +1,5 @@
 *.o
+jvc
+jvc.ini
+jellyfin-token.txt
+addr.h
