@@ -182,7 +182,7 @@ void send_mpv_keypress(char key) {
 #define INPUT_CDPLAYER 1
 #define INPUT_NUM_INPUTS 2
 static int input_app = 0;
-static int direct_flag, sa_bass_flag, standby_flag = 1;
+static int direct_flag, standby_flag = 1;
 static int text_mode = 0;
 static int headphones_volume = 10, headphones_on = 0;
 static int cd_select_mode = 0;
@@ -243,7 +243,7 @@ static void power_pressed() {
     if (standby_flag) {
         send_mpv_keypress('q');
         current_window_idx = 0;
-        tv_state_req = POWER_REQUEST_OFF;
+        tv_state_req = POWER_REQUEST_OFF; // DELAY power off only here?
         stereo_state_req = POWER_REQUEST_OFF;
         if (input_app == INPUT_CDPLAYER) {
             cdplayer_save();
@@ -255,12 +255,13 @@ static void power_pressed() {
             cd_load();
             input_app = INPUT_CDPLAYER;
             current_window_idx = 7;
+            if (direct_flag) stereo_state_req = POWER_REQUEST_ON;
         } else {
             system("cd /home/pi/GIT/rpi-music-television-simulator/ && player/build/mpvplayer >/dev/null 2>&1 &");
             current_window_idx = 6;
             if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
+            if (direct_flag && !headphones_on) stereo_state_req = POWER_REQUEST_ON;
         }
-        if (sa_bass_flag) stereo_state_req = POWER_REQUEST_ON;
     }
 }
 static void next_input_pressed() {
@@ -281,8 +282,7 @@ static void switch_window(int prev) {
     current_window_idx = i;
 }
 static void sa_bass_pressed() {
-    control_set_led(JVC_LED_S_A_BASS, sa_bass_flag = !sa_bass_flag);
-    if (!standby_flag) stereo_state_req = sa_bass_flag ? POWER_REQUEST_ON : POWER_REQUEST_OFF;
+    stereo_state_req = get_stereo_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
 }
 static int64_t cd_select_since_us;
 static void cd_select_pressed() {
@@ -317,15 +317,13 @@ static int control_event_callback(int ev_type, int value) {
     // print_event(ev_type, value);
     if (ev_type == EVENT_KEY_PRESSED) {
         if (value == JVC_KEY_DIRECT) {
-            control_set_led(JVC_LED_DIRECT, direct_flag = !direct_flag);
-            if (!direct_flag && !standby_flag) tv_state_req = POWER_REQUEST_ON;
+            tv_state_req = get_tv_power_state() == POWER_ON ? POWER_REQUEST_OFF : POWER_REQUEST_ON;
         }
         if (value == JVC_KEY_S_A_BASS) sa_bass_pressed();
         if (value == JVC_KEY_STANDBY) power_pressed();
         if (value == JVC_KEY_PREV) switch_window(1);
         if (value == JVC_KEY_NEXT) switch_window(0);
         if (value == JVC_KEY_BAND) if (cdplayer_active()) cd_select_pressed();
-        if (value == JVC_KEY_DISPLAY_MODE) ir_tx_send_tv(IR_THOMSON_AV);
         if (value == JVC_KEY_INPUT) cd_select_mode ? cd_deselect_pressed() : next_input_pressed();
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
@@ -360,6 +358,10 @@ static int control_event_callback(int ev_type, int value) {
     }
     if (input_app == INPUT_MPV && ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) power_pressed();
+        if (value == JVC_KEY_DISPLAY_MODE && !standby_flag) {
+            direct_flag = !direct_flag;
+            if (!direct_flag) tv_state_req = POWER_REQUEST_ON;
+        }
         if (value == JVC_REMOTE_KEY_CH_DOWN) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_DOWN) : send_mpv_keypress('s');
         if (value == JVC_REMOTE_KEY_CH_UP) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_UP) : send_mpv_keypress('w');
         if (value >= JVC_REMOTE_KEY_0 && value <= JVC_REMOTE_KEY_9) {
@@ -956,7 +958,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    while (!shutdown_requested) {
+    for (int tick = 0; !shutdown_requested; tick++) {
         struct window_t* current_window = &windows[current_window_idx];
         int64_t t0 = get_us();
         update_window(current_window);
@@ -966,6 +968,12 @@ int main(int argc, char *argv[]) {
             popup_overlay_ticks--;
         }
         display_show();
+        int v1o = get_stereo_power_state() == POWER_ON;
+        int v2o = get_tv_power_state() == POWER_ON;
+        int v1b = stereo_state_req != POWER_REQUEST_NONE;
+        int v2b = tv_state_req != POWER_REQUEST_NONE;
+        control_set_led(JVC_LED_S_A_BASS, v1b ? tick / 25 % 2: v1o);
+        control_set_led(JVC_LED_DIRECT, v2b ? tick / 25 % 2: v2o);
         int64_t t1 = get_us(), e1 = t1 - t0;
         if (e1 < 20000) usleep(20000 - e1);
     }
