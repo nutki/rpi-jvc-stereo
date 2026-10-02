@@ -707,7 +707,9 @@ void update_cdplayer(struct window_t* w) {
     if (wpos >= CDPREVIEW_W && loaded_cd_index != effective_cd_name_index) {
         char *fname = cdplayer_get_cd_dat_path(effective_cd_name_index);
         if (read_file_content(fname, (char *)pixels_all, sizeof pixels_all)) {
-            memset(pixels_all, 0, sizeof pixels_all);
+            if (read_file_content(CD_ALBUMS_PATH "/cd.dat", (char *)pixels_all, sizeof pixels_all)) {
+                memset(pixels_all, 0, sizeof pixels_all);
+            }
         }
         loaded_cd_index = effective_cd_name_index;
     }
