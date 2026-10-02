@@ -366,12 +366,14 @@ static int control_event_callback(int ev_type, int value) {
         }
         if (value == JVC_REMOTE_KEY_OK && current_window_idx == 7) cd_select_pressed();
         if (value == JVC_REMOTE_KEY_BACK && current_window_idx == 7) cd_deselect_pressed();
+        if (value == JVC_REMOTE_KEY_CH_DOWN || value == JVC_REMOTE_KEY_DOWN) if (!cd_select_mode) cdplayer_set_track_prev();
+        if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) if (!cd_select_mode) cdplayer_set_track_next();
     }
     if (cdplayer_active() && (ev_type == EVENT_REMOTE_PRESSED || ev_type == EVENT_REMOTE_REPEAT)) {
         if (value == JVC_REMOTE_KEY_RIGHT) cdplayer_seek_s(5);
         if (value == JVC_REMOTE_KEY_LEFT) cdplayer_seek_s(-5);
-        if (value == JVC_REMOTE_KEY_CH_DOWN || value == JVC_REMOTE_KEY_DOWN) cd_select_mode ? cd_select_change(-1) : cdplayer_set_track_prev();
-        if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) cd_select_mode ? cd_select_change(1) : cdplayer_set_track_next();
+        if (value == JVC_REMOTE_KEY_CH_DOWN || value == JVC_REMOTE_KEY_DOWN) if (cd_select_mode) cd_select_change(-1);
+        if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) if (cd_select_mode) cd_select_change(1);
     }
     if (preview_active() && ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_POWER) power_pressed();

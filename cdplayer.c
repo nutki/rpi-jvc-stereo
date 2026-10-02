@@ -271,7 +271,12 @@ void cdplayer_load_media(char *dir, int autostart) {
     }
     int initial_position = 0, play_state = 0;
     cdplayer_load_state_file(&initial_position, &play_state);
-    if (autostart) play_state = CDPLAYER_STATE_PLAY;
+    if (autostart) {
+        if (play_state == CDPLAYER_STATE_STOP) {
+            cdplayer_current_track = cdplayer_repeat == CDPLAYER_REPEAT_SHUFFLE_ALL ? (size_t)(rand() % cdplayer_track_count) : 0;
+        }
+        play_state = CDPLAYER_STATE_PLAY;
+    }
     if (cdplayer_track_count > 0) {
         if (cdplayer_current_track >= cdplayer_track_count) {
             cdplayer_current_track = 0;
