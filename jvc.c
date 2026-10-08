@@ -348,6 +348,7 @@ static int control_event_callback(int ev_type, int value) {
     }
     if (ev_type == EVENT_REMOTE_PRESSED) {
         if (value == JVC_REMOTE_KEY_SOURCE) next_input_pressed();
+        if (value == JVC_REMOTE_KEY_POWER) power_pressed();
     }
     if (cdplayer_active() && ev_type == EVENT_REMOTE_PRESSED) {
         if (value >= JVC_REMOTE_KEY_1 && value <= JVC_REMOTE_KEY_9) {
@@ -376,7 +377,6 @@ static int control_event_callback(int ev_type, int value) {
         if (value == JVC_REMOTE_KEY_CH_UP || value == JVC_REMOTE_KEY_UP) if (cd_select_mode) cd_select_change(1);
     }
     if (preview_active() && ev_type == EVENT_REMOTE_PRESSED) {
-        if (value == JVC_REMOTE_KEY_POWER) power_pressed();
         if (value == JVC_REMOTE_KEY_CH_DOWN) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_DOWN) : send_mpv_keypress('s');
         if (value == JVC_REMOTE_KEY_CH_UP) text_mode ? ir_tx_send_tv(IR_THOMSON_CH_UP) : send_mpv_keypress('w');
         if (value >= JVC_REMOTE_KEY_0 && value <= JVC_REMOTE_KEY_9) {
